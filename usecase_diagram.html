@@ -1,0 +1,374 @@
+<title>GrowBase 用例图</title>
+<style>
+  /* Layout: centered single column, diagram fills width */
+  :root {
+    --bg: #f8f9fb;
+    --surface: #ffffff;
+    --border: #e2e6ed;
+    --fg: #1a1d23;
+    --fg-muted: #6b7280;
+    --accent: #3b6ef8;
+    --accent-soft: #eef2fe;
+    --owner: #7c3aed;
+    --owner-soft: #f3effe;
+    --member: #0891b2;
+    --member-soft: #ecfbfd;
+    --ai: #d97706;
+    --ai-soft: #fefce8;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111318;
+      --surface: #1c1f27;
+      --border: #2e3340;
+      --fg: #e8eaf0;
+      --fg-muted: #8b93a8;
+      --accent: #6b8ffb;
+      --accent-soft: #1e2a4a;
+      --owner: #a78bfa;
+      --owner-soft: #2d1f4e;
+      --member: #22d3ee;
+      --member-soft: #0e2a33;
+      --ai: #fbbf24;
+      --ai-soft: #2d2008;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111318;
+    --surface: #1c1f27;
+    --border: #2e3340;
+    --fg: #e8eaf0;
+    --fg-muted: #8b93a8;
+    --accent: #6b8ffb;
+    --accent-soft: #1e2a4a;
+    --owner: #a78bfa;
+    --owner-soft: #2d1f4e;
+    --member: #22d3ee;
+    --member-soft: #0e2a33;
+    --ai: #fbbf24;
+    --ai-soft: #2d2008;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    padding-inline: 16px;
+    padding-block: 32px;
+  }
+
+  .page-header {
+    text-align: center;
+    margin-bottom: 36px;
+  }
+  .page-header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--fg);
+  }
+  .page-header p {
+    margin-top: 6px;
+    color: var(--fg-muted);
+    font-size: 13px;
+  }
+
+  .diagram-wrap {
+    max-width: 900px;
+    margin: 0 auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .legend {
+    max-width: 900px;
+    margin: 20px auto 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    padding-inline: 4px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--fg-muted);
+  }
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .legend-line {
+    width: 22px; height: 2px;
+    flex-shrink: 0;
+  }
+  .legend-dashed {
+    width: 22px; height: 2px;
+    background: repeating-linear-gradient(90deg, var(--fg-muted) 0 4px, transparent 4px 8px);
+    flex-shrink: 0;
+  }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+
+<div class="page-header">
+  <h1>GrowBase — 用例图</h1>
+  <p>系统参与者与核心用例关系总览</p>
+</div>
+
+<div class="diagram-wrap">
+<svg viewBox="0 0 880 660" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="GrowBase系统用例图">
+  <defs>
+    <!-- 背景 -->
+    <style>
+      text { font-family: 'Inter', 'PingFang SC', system-ui, sans-serif; }
+      .sys-label { font-size: 13px; font-weight: 600; fill: #6b7280; letter-spacing: 0.5px; }
+      .uc-text { font-size: 11.5px; fill: #1a1d23; }
+      .actor-label { font-size: 12px; font-weight: 600; fill: #1a1d23; }
+      .section-label { font-size: 10px; font-weight: 600; fill: #6b7280; letter-spacing: 0.8px; text-transform: uppercase; }
+      @media (prefers-color-scheme: dark) {
+        .uc-text { fill: #e8eaf0; }
+        .actor-label { fill: #e8eaf0; }
+        .sys-label { fill: #8b93a8; }
+        .section-label { fill: #8b93a8; }
+      }
+    </style>
+
+    <!-- 用例椭圆背景填充 -->
+    <!-- owner色 -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#00000018"/>
+    </filter>
+  </defs>
+
+  <!-- 系统边界大框 -->
+  <rect x="180" y="30" width="560" height="600" rx="14"
+    fill="none" stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="6 3"/>
+  <text x="460" y="22" text-anchor="middle" class="sys-label">GrowBase 知识库系统</text>
+
+  <!-- ─── 分区：账户 ─── -->
+  <rect x="195" y="44" width="240" height="88" rx="8" fill="#f0f4ff" opacity="0.6"/>
+  <text x="315" y="58" text-anchor="middle" class="section-label" fill="#3b6ef8">账户管理</text>
+
+  <!-- UC1 注册 -->
+  <ellipse cx="265" cy="90" rx="56" ry="22" fill="white" stroke="#3b6ef8" stroke-width="1.4" filter="url(#shadow)"/>
+  <text x="265" y="94" text-anchor="middle" class="uc-text">注册账号</text>
+
+  <!-- UC2 登录 -->
+  <ellipse cx="375" cy="90" rx="56" ry="22" fill="white" stroke="#3b6ef8" stroke-width="1.4" filter="url(#shadow)"/>
+  <text x="375" y="94" text-anchor="middle" class="uc-text">登录 / 退出</text>
+
+  <!-- ─── 分区：组织 ─── -->
+  <rect x="195" y="148" width="530" height="180" rx="8" fill="#f5f3ff" opacity="0.5"/>
+  <text x="460" y="163" text-anchor="middle" class="section-label" fill="#7c3aed">组织管理</text>
+
+  <!-- UC3 创建组织 -->
+  <ellipse cx="265" cy="200" rx="64" ry="22" fill="white" stroke="#7c3aed" stroke-width="1.4" filter="url(#shadow)"/>
+  <text x="265" y="204" text-anchor="middle" class="uc-text">创建组织</text>
+
+  <!-- UC4 邀请成员 -->
+  <ellipse cx="420" cy="200" rx="64" ry="22" fill="white" stroke="#7c3aed" stroke-width="1.4" filter="url(#shadow)"/>
+  <text x="420" y="204" text-anchor="middle" class="uc-text">邀请 / 移除成员</text>
+
+  <!-- UC5 设置权限 -->
+  <ellipse cx="585" cy="200" rx="64" ry="22" fill="white" stroke="#7c3aed" stroke-width="1.4" filter="url(#shadow)"/>
+  <text x="585" y="204" text-anchor="middle" class="uc-text">设置成员角色</text>
+
+  <!-- UC6 定义目录 -->
+  <ellipse cx="340" cy="300" rx="72" ry="22" fill="white" stroke="#7c3aed" stroke-width="1.4" filter="url(#shadow)"/>
+  <text x="340" y="296" text-anchor="middle" class="uc-text">定义目录结构</text>
+  <text x="340" y="308" text-anchor="middle" class="uc-text">（增 / 改 / 删）</text>
+
+  <!-- UC7 编辑组织信息 -->
+  <ellipse cx="555" cy="300" rx="72" ry="22" fill="white" stroke="#7c3aed" stroke-width="1.4" filter="url(#shadow)"/>
+  <text x="555" y="296" text-anchor="middle" class="uc-text">编辑组织信息</text>
+  <text x="555" y="308" text-anchor="middle" class="uc-text">（名称 / 描述）</text>
+
+  <!-- ─── 分区：资料 ─── -->
+  <rect x="195" y="344" width="530" height="130" rx="8" fill="#ecfeff" opacity="0.55"/>
+  <text x="460" y="358" text-anchor="middle" class="section-label" fill="#0891b2">资料管理</text>
+
+  <!-- UC8 上传资料 -->
+  <ellipse cx="265" cy="400" rx="60" ry="22" fill="white" stroke="#0891b2" stroke-width="1.4" filter="url(#shadow)"/>
+  <text x="265" y="404" text-anchor="middle" class="uc-text">上传资料</text>
+
+  <!-- UC9 确认AI分类 -->
+  <ellipse cx="430" cy="400" rx="74" ry="22" fill="white" stroke="#0891b2" stroke-width="1.4" filter="url(#shadow)"/>
+  <text x="430" y="404" text-anchor="middle" class="uc-text">确认 / 调整AI分类</text>
+
+  <!-- UC10 浏览知识库 -->
+  <ellipse cx="615" cy="400" rx="68" ry="22" fill="white" stroke="#0891b2" stroke-width="1.4" filter="url(#shadow)"/>
+  <text x="615" y="404" text-anchor="middle" class="uc-text">浏览 / 搜索知识库</text>
+
+  <!-- UC11 删除资料 -->
+  <ellipse cx="350" cy="460" rx="60" ry="22" fill="white" stroke="#0891b2" stroke-width="1.4" filter="url(#shadow)"/>
+  <text x="350" y="464" text-anchor="middle" class="uc-text">删除资料</text>
+
+  <!-- ─── 分区：自生长 ─── -->
+  <rect x="195" y="498" width="530" height="118" rx="8" fill="#fffbeb" opacity="0.6"/>
+  <text x="460" y="513" text-anchor="middle" class="section-label" fill="#d97706">自生长</text>
+
+  <!-- UC12 配置RSS -->
+  <ellipse cx="280" cy="558" rx="68" ry="22" fill="white" stroke="#d97706" stroke-width="1.4" filter="url(#shadow)"/>
+  <text x="280" y="554" text-anchor="middle" class="uc-text">配置RSS订阅源</text>
+  <text x="280" y="566" text-anchor="middle" class="uc-text">（可信来源）</text>
+
+  <!-- UC13 触发自生长 -->
+  <ellipse cx="460" cy="558" rx="72" ry="22" fill="white" stroke="#d97706" stroke-width="1.4" filter="url(#shadow)"/>
+  <text x="460" y="554" text-anchor="middle" class="uc-text">触发 / 查看</text>
+  <text x="460" y="566" text-anchor="middle" class="uc-text">自生长资料</text>
+
+  <!-- UC14 审核临时资料 -->
+  <ellipse cx="640" cy="558" rx="72" ry="22" fill="white" stroke="#d97706" stroke-width="1.4" filter="url(#shadow)"/>
+  <text x="640" y="554" text-anchor="middle" class="uc-text">审核临时目录</text>
+  <text x="640" y="566" text-anchor="middle" class="uc-text">（采纳 / 丢弃）</text>
+
+  <!-- ════ 参与者：普通用户 ════ -->
+  <!-- 小人 -->
+  <g transform="translate(60, 80)">
+    <circle cx="0" cy="-14" r="10" fill="none" stroke="#0891b2" stroke-width="1.8"/>
+    <line x1="0" y1="-4" x2="0" y2="18" stroke="#0891b2" stroke-width="1.8"/>
+    <line x1="-14" y1="4" x2="14" y2="4" stroke="#0891b2" stroke-width="1.8"/>
+    <line x1="0" y1="18" x2="-10" y2="34" stroke="#0891b2" stroke-width="1.8"/>
+    <line x1="0" y1="18" x2="10" y2="34" stroke="#0891b2" stroke-width="1.8"/>
+    <text x="0" y="50" text-anchor="middle" class="actor-label" fill="#0891b2">普通成员</text>
+  </g>
+
+  <!-- 参与者：组织管理员 -->
+  <g transform="translate(60, 260)">
+    <circle cx="0" cy="-14" r="10" fill="none" stroke="#7c3aed" stroke-width="1.8"/>
+    <line x1="0" y1="-4" x2="0" y2="18" stroke="#7c3aed" stroke-width="1.8"/>
+    <line x1="-14" y1="4" x2="14" y2="4" stroke="#7c3aed" stroke-width="1.8"/>
+    <line x1="0" y1="18" x2="-10" y2="34" stroke="#7c3aed" stroke-width="1.8"/>
+    <line x1="0" y1="18" x2="10" y2="34" stroke="#7c3aed" stroke-width="1.8"/>
+    <text x="0" y="50" text-anchor="middle" class="actor-label" fill="#7c3aed">组织管理员</text>
+    <text x="0" y="63" text-anchor="middle" style="font-size:10px;fill:#7c3aed;">(Owner/Admin)</text>
+  </g>
+
+  <!-- 参与者：AI系统 -->
+  <g transform="translate(800, 340)">
+    <!-- 机器人图标 -->
+    <rect x="-18" y="-24" width="36" height="28" rx="5" fill="none" stroke="#d97706" stroke-width="1.8"/>
+    <circle cx="-7" cy="-14" r="3" fill="#d97706"/>
+    <circle cx="7" cy="-14" r="3" fill="#d97706"/>
+    <line x1="-6" y1="-4" x2="6" y2="-4" stroke="#d97706" stroke-width="1.5"/>
+    <line x1="0" y1="-24" x2="0" y2="-30" stroke="#d97706" stroke-width="1.8"/>
+    <circle cx="0" cy="-33" r="3" fill="none" stroke="#d97706" stroke-width="1.5"/>
+    <line x1="-18" y1="4" x2="-26" y2="14" stroke="#d97706" stroke-width="1.8"/>
+    <line x1="18" y1="4" x2="26" y2="14" stroke="#d97706" stroke-width="1.8"/>
+    <line x1="-18" y1="14" x2="-26" y2="24" stroke="#d97706" stroke-width="1.8"/>
+    <line x1="18" y1="14" x2="26" y2="24" stroke="#d97706" stroke-width="1.8"/>
+    <text x="0" y="42" text-anchor="middle" class="actor-label" fill="#d97706">AI 系统</text>
+    <text x="0" y="55" text-anchor="middle" style="font-size:10px;fill:#d97706;">(大模型工作流)</text>
+  </g>
+
+  <!-- ════ 连线 ════ -->
+
+  <!-- 普通用户 → 注册/登录 -->
+  <line x1="74" y1="106" x2="200" y2="106" stroke="#0891b2" stroke-width="1.2" opacity="0.7"/>
+  <line x1="74" y1="106" x2="209" y2="90" stroke="#0891b2" stroke-width="1.2" opacity="0.7"/>
+  <line x1="74" y1="106" x2="314" y2="90" stroke="#0891b2" stroke-width="1.2" opacity="0.7"/>
+
+  <!-- 普通用户 → 上传资料 -->
+  <line x1="74" y1="114" x2="200" y2="400" stroke="#0891b2" stroke-width="1.2" opacity="0.7"/>
+
+  <!-- 普通用户 → 确认分类 -->
+  <line x1="74" y1="114" x2="354" y2="400" stroke="#0891b2" stroke-width="1.2" opacity="0.7"/>
+
+  <!-- 普通用户 → 浏览知识库 -->
+  <line x1="74" y1="114" x2="546" y2="400" stroke="#0891b2" stroke-width="1.2" opacity="0.7"/>
+
+  <!-- 普通用户 → 审核临时资料 -->
+  <line x1="74" y1="120" x2="566" y2="558" stroke="#0891b2" stroke-width="1.2" opacity="0.7"/>
+
+  <!-- 管理员 → 创建组织 -->
+  <line x1="74" y1="296" x2="200" y2="200" stroke="#7c3aed" stroke-width="1.2" opacity="0.7"/>
+
+  <!-- 管理员 → 邀请成员 -->
+  <line x1="74" y1="296" x2="355" y2="200" stroke="#7c3aed" stroke-width="1.2" opacity="0.7"/>
+
+  <!-- 管理员 → 权限 -->
+  <line x1="74" y1="300" x2="520" y2="200" stroke="#7c3aed" stroke-width="1.2" opacity="0.7"/>
+
+  <!-- 管理员 → 定义目录 -->
+  <line x1="74" y1="304" x2="267" y2="300" stroke="#7c3aed" stroke-width="1.2" opacity="0.7"/>
+
+  <!-- 管理员 → 编辑组织 -->
+  <line x1="74" y1="304" x2="482" y2="300" stroke="#7c3aed" stroke-width="1.2" opacity="0.7"/>
+
+  <!-- 管理员 → 删除资料 -->
+  <line x1="74" y1="308" x2="289" y2="460" stroke="#7c3aed" stroke-width="1.2" opacity="0.7"/>
+
+  <!-- 管理员 → 配置RSS -->
+  <line x1="74" y1="310" x2="211" y2="558" stroke="#7c3aed" stroke-width="1.2" opacity="0.7"/>
+
+  <!-- 管理员 → 触发自生长 -->
+  <line x1="74" y1="312" x2="387" y2="558" stroke="#7c3aed" stroke-width="1.2" opacity="0.7"/>
+
+  <!-- AI → 确认分类（虚线，include） -->
+  <line x1="800" y1="370" x2="505" y2="400" stroke="#d97706" stroke-width="1.2"
+    stroke-dasharray="5 3" opacity="0.8"/>
+  <text x="640" y="393" text-anchor="middle" style="font-size:9.5px;fill:#d97706;">«include»</text>
+
+  <!-- AI → 触发自生长（虚线）-->
+  <line x1="800" y1="380" x2="533" y2="558" stroke="#d97706" stroke-width="1.2"
+    stroke-dasharray="5 3" opacity="0.8"/>
+  <text x="690" y="488" text-anchor="middle" style="font-size:9.5px;fill:#d97706;">«include»</text>
+
+  <!-- include: 上传资料 → 确认分类（内部） -->
+  <line x1="325" y1="400" x2="356" y2="400" stroke="#0891b2" stroke-width="1"
+    stroke-dasharray="4 2" opacity="0.6"/>
+  <text x="340" y="394" text-anchor="middle" style="font-size:9px;fill:#0891b2;">«include»</text>
+
+  <!-- 继承线：管理员 extend 普通用户 -->
+  <line x1="60" y1="233" x2="60" y2="180" stroke="#888" stroke-width="1.2"/>
+  <polygon points="60,152 54,166 66,166" fill="#888"/>
+  <text x="82" y="197" text-anchor="start" style="font-size:9.5px;fill:#888;">继承</text>
+</svg>
+</div>
+
+<div class="legend">
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#0891b2"></div>
+    普通成员
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#7c3aed"></div>
+    组织管理员 (Owner / Admin)
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#d97706"></div>
+    AI 系统
+  </div>
+  <div class="legend-item">
+    <div class="legend-line" style="background:#6b7280"></div>
+    参与关系
+  </div>
+  <div class="legend-item">
+    <div class="legend-dashed"></div>
+    «include» 关系
+  </div>
+  <div class="legend-item">
+    <svg width="22" height="14" viewBox="0 0 22 14">
+      <line x1="11" y1="13" x2="11" y2="2" stroke="#888" stroke-width="1.3"/>
+      <polygon points="11,0 6,8 16,8" fill="#888"/>
+    </svg>
+    继承关系（管理员 ⊃ 成员权限）
+  </div>
+</div>
