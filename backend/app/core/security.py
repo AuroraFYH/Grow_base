@@ -6,12 +6,25 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+import base64
+import hashlib
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.user import User
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+def _fernet():
+    from cryptography.fernet import Fernet
+    key = base64.urlsafe_b64encode(hashlib.sha256(settings.SECRET_KEY.encode()).digest())
+    return Fernet(key)
+
+def encrypt_api_key(plain_key: str) -> str:
+    return _fernet().encrypt(plain_key.encode()).decode()
+
+def decrypt_api_key(encrypted: str) -> str:
+    return _fernet().decrypt(encrypted.encode()).decode()
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)

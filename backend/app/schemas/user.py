@@ -22,3 +22,11 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     user: UserOut
+
+
+class LocalBootstrap(BaseModel):
+    access_token: str
+    token_type: str
+    user: UserOut
+    workspace_id: int
+    workspace_name: str

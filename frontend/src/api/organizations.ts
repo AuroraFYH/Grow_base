@@ -27,6 +27,31 @@ export interface CategoryOut {
   children: CategoryOut[]
 }
 
+export interface TemplateCategory {
+  name: string
+  description: string | null
+  children: TemplateCategory[]
+}
+
+export interface ClassificationTemplate {
+  key: string
+  name: string
+  summary: string
+  description: string
+  suitable_for: string
+  default_prompt: string
+  categories: TemplateCategory[]
+}
+
+export interface ClassificationConfig {
+  organization_id: number
+  template_key: string | null
+  template_name: string | null
+  custom_prompt: string | null
+  effective_prompt: string | null
+  updated_at: string | null
+}
+
 export const orgApi = {
   create: (data: { name: string; description?: string }) =>
     api.post<OrganizationOut>('/api/organizations', data),
@@ -58,4 +83,16 @@ export const orgApi = {
 
   deleteCategory: (orgId: number, catId: number) =>
     api.delete(`/api/organizations/${orgId}/categories/${catId}`),
+
+  getClassificationTemplates: () =>
+    api.get<ClassificationTemplate[]>('/api/classification/templates'),
+
+  getClassification: (id: number) =>
+    api.get<ClassificationConfig>(`/api/organizations/${id}/classification`),
+
+  updateClassification: (id: number, data: {
+    template_key: string
+    custom_prompt?: string
+    replace_existing?: boolean
+  }) => api.put<ClassificationConfig>(`/api/organizations/${id}/classification`, data),
 }

@@ -20,6 +20,12 @@ class Organization(Base):
 
     members = relationship("OrganizationMember", back_populates="organization", cascade="all, delete-orphan")
     categories = relationship("Category", back_populates="organization", cascade="all, delete-orphan")
+    classification_config = relationship(
+        "ClassificationConfig", back_populates="organization", uselist=False,
+        cascade="all, delete-orphan"
+    )
+    knowledge_items = relationship("KnowledgeItem", back_populates="organization", cascade="all, delete-orphan")
+    chat_messages = relationship("ChatMessage", back_populates="organization", cascade="all, delete-orphan")
 
 class OrganizationMember(Base):
     __tablename__ = "organization_members"
@@ -47,3 +53,14 @@ class Category(Base):
     organization = relationship("Organization", back_populates="categories")
     parent = relationship("Category", remote_side="Category.id", back_populates="children")
     children = relationship("Category", back_populates="parent", cascade="all, delete-orphan")
+
+
+class ClassificationConfig(Base):
+    __tablename__ = "classification_configs"
+
+    organization_id = Column(Integer, ForeignKey("organizations.id"), primary_key=True)
+    template_key = Column(String(50), nullable=False)
+    custom_prompt = Column(Text, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    organization = relationship("Organization", back_populates="classification_config")

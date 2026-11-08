@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import {
   Layout, Menu, Typography, Button, Modal, Form, Input,
-  Table, Tag, Space, Popconfirm, message, Tree, Select, Tooltip
+  Table, Tag, Space, Popconfirm, message, Tree, Select, Tooltip, Card, Alert
 } from 'antd'
 import {
   PlusOutlined, DeleteOutlined, EditOutlined,
@@ -9,7 +9,10 @@ import {
 } from '@ant-design/icons'
 import { useParams, useNavigate } from 'react-router-dom'
 import { orgApi } from '../api/organizations'
-import type { OrganizationOut, MemberOut, CategoryOut } from '../api/organizations'
+import type {
+  OrganizationOut, MemberOut, CategoryOut, ClassificationConfig,
+  ClassificationTemplate, TemplateCategory,
+} from '../api/organizations'
 import { useAuthStore } from '../store/auth'
 
 const { Sider, Content } = Layout
@@ -26,6 +29,16 @@ function buildTreeData(cats: CategoryOut[]): any[] {
   }))
 }
 
+function renderTemplateCategories(categories: TemplateCategory[], level = 0): ReactNode[] {
+  return categories.flatMap((category) => [
+    <div key={`${level}-${category.name}`} style={{ paddingLeft: level * 16, marginBottom: 4 }}>
+      <Text>{category.name}</Text>
+      {category.description && <Text type="secondary">：{category.description}</Text>}
+    </div>,
+    ...renderTemplateCategories(category.children, level + 1),
+  ])
+}
+
 export default function OrgDetailPage() {
   const { orgId } = useParams<{ orgId: string }>()
   const id = Number(orgId)
@@ -35,14 +48,19 @@ export default function OrgDetailPage() {
   const [org, setOrg] = useState<OrganizationOut | null>(null)
   const [members, setMembers] = useState<MemberOut[]>([])
   const [categories, setCategories] = useState<CategoryOut[]>([])
+  const [classificationConfig, setClassificationConfig] = useState<ClassificationConfig | null>(null)
+  const [classificationTemplates, setClassificationTemplates] = useState<ClassificationTemplate[]>([])
   const [tab, setTab] = useState<TabKey>('members')
   const [inviteOpen, setInviteOpen] = useState(false)
   const [catOpen, setCatOpen] = useState(false)
   const [editCatOpen, setEditCatOpen] = useState(false)
+  const [templateOpen, setTemplateOpen] = useState(false)
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState('')
   const [selectedCat, setSelectedCat] = useState<CategoryOut | null>(null)
   const [inviteForm] = Form.useForm()
   const [catForm] = Form.useForm()
   const [editCatForm] = Form.useForm()
+  const [templateForm] = Form.useForm()
 
   const isAdmin = members.find((m) => m.user_id === user?.id)?.role !== 'member'
 
@@ -50,6 +68,8 @@ export default function OrgDetailPage() {
     orgApi.get(id).then(({ data }) => setOrg(data)).catch(() => navigate('/'))
     orgApi.listMembers(id).then(({ data }) => setMembers(data))
     orgApi.getCategories(id).then(({ data }) => setCategories(data))
+    orgApi.getClassification(id).then(({ data }) => setClassificationConfig(data))
+    orgApi.getClassificationTemplates().then(({ data }) => setClassificationTemplates(data))
   }, [id])
 
   const handleInvite = async (values: { email: string; role: string }) => {
@@ -111,6 +131,51 @@ export default function OrgDetailPage() {
     }
   }
 
+  const selectedTemplate = classificationTemplates.find((template) => template.key === selectedTemplateKey)
+
+  const openTemplateModal = () => {
+    const templateKey = classificationConfig?.template_key || classificationTemplates[0]?.key || ''
+    const template = classificationTemplates.find((item) => item.key === templateKey)
+    setSelectedTemplateKey(templateKey)
+    templateForm.setFieldsValue({
+      template_key: templateKey,
+      custom_prompt: classificationConfig?.custom_prompt || template?.default_prompt || '',
+    })
+    setTemplateOpen(true)
+  }
+
+  const persistClassification = async (values: { template_key: string; custom_prompt?: string }, replaceExisting = false) => {
+    try {
+      const { data } = await orgApi.updateClassification(id, {
+        template_key: values.template_key,
+        custom_prompt: values.custom_prompt,
+        replace_existing: replaceExisting,
+      })
+      setClassificationConfig(data)
+      const categoriesResult = await orgApi.getCategories(id)
+      setCategories(categoriesResult.data)
+      message.success(values.template_key === 'custom' ? '自定义分类配置已保存' : '分类模板已应用')
+      setTemplateOpen(false)
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '保存分类配置失败')
+    }
+  }
+
+  const handleTemplateSubmit = (values: { template_key: string; custom_prompt?: string }) => {
+    const isSwitching = classificationConfig?.template_key !== values.template_key
+    if (values.template_key !== 'custom' && categories.length > 0 && isSwitching) {
+      Modal.confirm({
+        title: '替换现有目录？',
+        content: '应用这个模板会删除当前目录并生成模板目录，已有目录名称和层级不会保留。是否继续？',
+        okText: '替换并应用',
+        cancelText: '取消',
+        onOk: () => persistClassification(values, true),
+      })
+      return
+    }
+    persistClassification(values)
+  }
+
   const flatCategories = (cats: CategoryOut[]): CategoryOut[] =>
     cats.flatMap((c) => [c, ...flatCategories(c.children)])
 
@@ -150,6 +215,8 @@ export default function OrgDetailPage() {
           selectedKeys={[tab]}
           onClick={({ key }) => setTab(key as TabKey)}
           items={[
+            { key: 'knowledge', icon: <FolderOutlined />, label: '知识库', onClick: () => navigate(`/org/${id}/knowledge`) },
+            { key: 'assistant', icon: <FolderOutlined />, label: 'AI 助手', onClick: () => navigate(`/org/${id}/assistant`) },
             { key: 'members', icon: <TeamOutlined />, label: '成员管理' },
             { key: 'categories', icon: <FolderOutlined />, label: '目录结构' },
           ]}
@@ -184,6 +251,39 @@ export default function OrgDetailPage() {
 
           {tab === 'categories' && (
             <>
+              <Card size="small" style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <Text strong>分类体系</Text>
+                    <div style={{ marginTop: 8 }}>
+                      {classificationConfig?.template_name ? (
+                        <Tag color="blue">{classificationConfig.template_name}</Tag>
+                      ) : (
+                        <Text type="secondary">尚未选择分类体系</Text>
+                      )}
+                    </div>
+                    {classificationConfig?.effective_prompt && (
+                      <Text type="secondary" style={{ display: 'block', marginTop: 8 }} ellipsis={{ tooltip: classificationConfig.effective_prompt }}>
+                        当前提示词：{classificationConfig.effective_prompt}
+                      </Text>
+                    )}
+                  </div>
+                  {isAdmin && (
+                    <Button type="primary" onClick={openTemplateModal}>
+                      选择分类模板
+                    </Button>
+                  )}
+                </div>
+              </Card>
+              {!classificationConfig?.template_key && (
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="先选择一套分类体系"
+                  description="模板会生成一组可编辑的 starter 目录；如果没有合适的体系，可以选择自定义模板并填写自己的分类提示词。"
+                />
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
                 <Text strong>知识库目录结构</Text>
                 {isAdmin && (
@@ -272,6 +372,66 @@ export default function OrgDetailPage() {
             <Input.TextArea rows={2} />
           </Form.Item>
           <Button type="primary" htmlType="submit" block>保存</Button>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="选择分类模板"
+        open={templateOpen}
+        onCancel={() => setTemplateOpen(false)}
+        footer={null}
+        width={680}
+      >
+        <Form
+          form={templateForm}
+          onFinish={handleTemplateSubmit}
+          layout="vertical"
+          style={{ marginTop: 16 }}
+          onValuesChange={(changed) => {
+            if (changed.template_key) {
+              const nextKey = changed.template_key as string
+              setSelectedTemplateKey(nextKey)
+              const nextTemplate = classificationTemplates.find((template) => template.key === nextKey)
+              if (nextTemplate) {
+                templateForm.setFieldValue('custom_prompt', nextTemplate.default_prompt)
+              }
+            }
+          }}
+        >
+          <Form.Item name="template_key" label="分类体系" rules={[{ required: true, message: '请选择分类体系' }]}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={classificationTemplates.map((template) => ({
+                value: template.key,
+                label: `${template.name}：${template.summary}`,
+              }))}
+            />
+          </Form.Item>
+          {selectedTemplate && (
+            <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
+              <Text strong>{selectedTemplate.name}</Text>
+              <Text type="secondary" style={{ display: 'block', marginTop: 4 }}>{selectedTemplate.description}</Text>
+              <Text type="secondary" style={{ display: 'block', marginTop: 4 }}>适合：{selectedTemplate.suitable_for}</Text>
+              {selectedTemplate.categories.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <Text strong>将生成的 starter 目录</Text>
+                  <div style={{ marginTop: 8 }}>{renderTemplateCategories(selectedTemplate.categories)}</div>
+                </div>
+              )}
+            </Card>
+          )}
+          <Form.Item
+            name="custom_prompt"
+            label="分类提示词"
+            rules={[{ required: selectedTemplateKey === 'custom', message: '自定义模板需要填写分类提示词' }]}
+            extra="可以直接使用模板默认提示词，也可以按你的团队或个人习惯调整。"
+          >
+            <Input.TextArea rows={6} placeholder="描述 AI 应该如何判断资料所属分类" />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" block>
+            保存分类配置
+          </Button>
         </Form>
       </Modal>
     </Layout>

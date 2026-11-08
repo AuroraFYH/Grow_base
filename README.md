@@ -215,7 +215,7 @@ AI 根据目录规则推荐分类、摘要和标签
 
 ### 10.4 GrowBase 顶层 DFD
 
-待补充：GrowBase 顶层数据流图。
+![alt text](image-1.png)
 
 ### 10.5 GrowBase 第一层 DFD
 
@@ -229,7 +229,7 @@ AI 根据目录规则推荐分类、摘要和标签
 6. AI 分类与人工审核；
 7. 自生长资源管理。
 
-待补充：GrowBase 第一层数据流图。
+![alt text](image-2.png)
 
 ### 10.6 “资料接收与 AI 分类”第二层 DFD
 
