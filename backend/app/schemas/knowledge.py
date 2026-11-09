@@ -22,6 +22,9 @@ class KnowledgeOut(BaseModel):
     title: str
     source_type: str
     source_url: Optional[str]
+    file_name: Optional[str] = None
+    file_mime_type: Optional[str] = None
+    file_size: Optional[int] = None
     content: Optional[str]
     summary: Optional[str]
     tags: List[str]

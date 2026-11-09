@@ -151,6 +151,58 @@ async def generate_video_tutorial(
     return tutorial
 
 
+async def organize_uploaded_document(
+    title: str,
+    raw_text: str,
+    user_instructions: str | None,
+    api_key: str | None,
+    base_url: str | None,
+    model_name: str | None,
+) -> str:
+    """Turn extracted file text into a useful, structured knowledge document."""
+    if not api_key or not model_name:
+        raise ValueError("AI 整理文件需要先在设置中配置可用的 AI 模型")
+    if not raw_text.strip():
+        raise ValueError("没有从文件中提取到可整理的文字")
+
+    system_prompt = """你是一名严谨的中文知识库编辑。请把用户上传文件中的原始文字重组为一份可以长期阅读和复用的 Markdown 文档，而不是简单复制、逐段缩写或堆砌摘要。
+
+要求：
+- 识别主题和读者真正需要掌握的内容，删除重复、噪声、页眉页脚和无关文字
+- 按内容本身的逻辑重新组织章节；操作型内容写成可执行步骤，概念型内容讲清直觉、机制、例子和边界
+- 保留关键事实、参数、代码和注意事项，不编造原文不存在的结论
+- 必要的外部知识补充必须标注“【AI 补充】”，无法确认的内容标注“【待核对】”
+- 至少包含内容概览、核心正文、实践或应用、常见误区/注意事项、要点回顾
+- 使用清晰的 Markdown 标题、列表和代码块；不要输出 YAML frontmatter
+- 只输出整理后的最终文档，不解释整理过程"""
+    user_prompt = (
+        f"文件标题：{title}\n"
+        f"用户处理要求：{user_instructions or '整理成结构化、可复用的知识库文档'}\n\n"
+        f"文件原文：\n{raw_text[:30_000]}"
+    )
+    try:
+        result = await chat_completion(
+            api_key=api_key,
+            model_name=model_name,
+            base_url=base_url,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+            max_tokens=6000,
+            timeout=300,
+        )
+    except Exception as exc:
+        raise ValueError(f"AI 文件整理失败：{exc}") from exc
+    document = result.strip()
+    document = re.sub(r"^```(?:markdown|md)?\s*", "", document, flags=re.IGNORECASE)
+    document = re.sub(r"\s*```$", "", document)
+    if len(document) < 300:
+        raise ValueError("AI 返回的文档过短，未达到知识库整理要求")
+    return document
+
+
 def _tokens(value: str) -> list[str]:
     chunks = re.findall(r"[一-鿿]{2,}|[a-zA-Z][a-zA-Z0-9_-]{1,}|\d+", value.lower())
     return list(dict.fromkeys(chunks))

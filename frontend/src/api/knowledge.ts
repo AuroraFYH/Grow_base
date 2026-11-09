@@ -3,12 +3,15 @@ import api from './client'
 export interface KnowledgeItem {
   id: number
   title: string
-  source_type: 'link' | 'note' | 'video_tutorial'
+  source_type: 'link' | 'note' | 'video_tutorial' | 'file'
   source_url: string | null
+  file_name: string | null
+  file_mime_type: string | null
+  file_size: number | null
   content: string | null
   summary: string | null
   tags: string[]
-  status: 'ready' | 'review' | 'processing' | 'error'
+  status: 'ready' | 'review' | 'processing' | 'error' | 'archived'
   ai_reason: string | null
   category_id: number | null
   category_name: string | null
@@ -36,6 +39,18 @@ export const knowledgeApi = {
 
   create: (orgId: number, data: { title?: string; source_url?: string; content?: string; instructions?: string }) =>
     api.post<KnowledgeItem>(`/api/organizations/${orgId}/knowledge`, data),
+
+  upload: (orgId: number, data: { file: File; title?: string; shouldProcess: boolean; instructions?: string }) => {
+    const form = new FormData()
+    form.append('file', data.file)
+    if (data.title) form.append('title', data.title)
+    form.append('should_process', String(data.shouldProcess))
+    if (data.shouldProcess && data.instructions) form.append('instructions', data.instructions)
+    return api.post<KnowledgeItem>(`/api/organizations/${orgId}/knowledge/upload`, form)
+  },
+
+  download: (orgId: number, knowledgeId: number) =>
+    api.get<Blob>(`/api/organizations/${orgId}/knowledge/${knowledgeId}/file`, { responseType: 'blob' }),
 
   remove: (orgId: number, knowledgeId: number) =>
     api.delete(`/api/organizations/${orgId}/knowledge/${knowledgeId}`),

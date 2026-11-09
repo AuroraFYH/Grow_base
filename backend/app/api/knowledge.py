@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 from typing import List
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -26,6 +27,7 @@ from app.services.knowledge_ai import (
     classify_and_summarize,
     classify_text,
     generate_video_tutorial,
+    organize_uploaded_document,
     requests_video_tutorial,
     summarize,
 )
@@ -62,6 +64,9 @@ def to_out(item: KnowledgeItem) -> KnowledgeOut:
         title=item.title,
         source_type=item.source_type,
         source_url=item.source_url,
+        file_name=item.file_name,
+        file_mime_type=item.file_mime_type,
+        file_size=item.file_size,
         content=item.content,
         summary=item.summary,
         tags=item.tags or [],
@@ -99,6 +104,7 @@ async def _process_item_with_llm(
         try:
             llm_creds = await get_user_llm_config(user_id, db)
             processing_reason = ""
+            user_instructions = user_instructions or item.processing_instructions
 
             # Step 1: fetch source content. Tutorial requests use the dedicated
             # video transcription pipeline even when the user typed instructions.
@@ -139,6 +145,22 @@ async def _process_item_with_llm(
                     model_name=model_name,
                 )
                 processing_reason = "已提取视频字幕并生成文字版教程。"
+            elif item.source_type == "file":
+                if not item.file_path or not item.file_name:
+                    raise ValueError("上传文件不存在")
+                from app.services.file_storage import extract_text
+
+                raw_text = extract_text(item.file_path, item.file_name)
+                api_key, base_url, model_name = llm_creds or (None, None, None)
+                item.content = await organize_uploaded_document(
+                    title=item.title,
+                    raw_text=raw_text,
+                    user_instructions=user_instructions,
+                    api_key=api_key,
+                    base_url=base_url,
+                    model_name=model_name,
+                )
+                processing_reason = "已读取上传文件并按要求整理为知识库文档。"
             elif item.source_url and not item.content:
                 try:
                     from app.services.content_fetcher import fetch_content
@@ -315,6 +337,7 @@ async def create_knowledge(
         ),
         source_url=source_url,
         content=content,
+        processing_instructions=instructions,
         status="processing",
         tags=[],
     )
@@ -334,6 +357,9 @@ async def create_knowledge(
         title=item.title,
         source_type=item.source_type,
         source_url=item.source_url,
+        file_name=item.file_name,
+        file_mime_type=item.file_mime_type,
+        file_size=item.file_size,
         content=item.content,
         summary=item.summary,
         tags=[],
@@ -345,6 +371,90 @@ async def create_knowledge(
         created_at=item.created_at,
         updated_at=item.updated_at,
     )
+
+
+@router.post("/api/organizations/{org_id}/knowledge/upload", response_model=KnowledgeOut, status_code=201)
+async def upload_knowledge_file(
+    org_id: int,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    title: str | None = Form(default=None, max_length=240),
+    should_process: bool = Form(default=False),
+    instructions: str | None = Form(default=None, max_length=2000),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> KnowledgeOut:
+    await require_member(org_id, current_user, db)
+    from app.services.file_storage import save_upload
+
+    try:
+        stored_path, original_name, size = await save_upload(file, org_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"文件保存失败：{exc}") from exc
+
+    clean_title = (title or "").strip() or original_name[:240]
+    clean_instructions = (instructions or "").strip() or None
+    item = KnowledgeItem(
+        organization_id=org_id,
+        created_by=current_user.id,
+        title=clean_title,
+        source_type="file",
+        file_path=str(stored_path),
+        file_name=original_name,
+        file_mime_type=file.content_type or "application/octet-stream",
+        file_size=size,
+        processing_instructions=clean_instructions if should_process else None,
+        status="processing" if should_process else "archived",
+        tags=[] if should_process else ["文件"],
+        ai_reason=None if should_process else "文件已存入知识库，未进行 AI 整理。",
+    )
+    db.add(item)
+    try:
+        await db.commit()
+        await db.refresh(item)
+    except Exception:
+        stored_path.unlink(missing_ok=True)
+        raise
+
+    if should_process:
+        background_tasks.add_task(
+            _process_item_with_llm,
+            item_id=item.id,
+            user_id=current_user.id,
+            org_id=org_id,
+            user_instructions=clean_instructions,
+        )
+    return to_out(item)
+
+
+@router.get("/api/organizations/{org_id}/knowledge/{knowledge_id}/file")
+async def download_knowledge_file(
+    org_id: int,
+    knowledge_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await require_member(org_id, current_user, db)
+    result = await db.execute(
+        select(KnowledgeItem).where(
+            KnowledgeItem.id == knowledge_id,
+            KnowledgeItem.organization_id == org_id,
+            KnowledgeItem.source_type == "file",
+        )
+    )
+    item = result.scalar_one_or_none()
+    if not item or not item.file_path or not item.file_name:
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    from pathlib import Path
+    from app.services.file_storage import UPLOAD_ROOT
+
+    path = Path(item.file_path).resolve()
+    if not path.is_relative_to(UPLOAD_ROOT.resolve()) or not path.is_file():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return FileResponse(path, media_type=item.file_mime_type, filename=item.file_name)
 
 
 @router.post("/api/organizations/{org_id}/knowledge/reprocess", response_model=List[KnowledgeOut])
@@ -398,8 +508,12 @@ async def delete_knowledge(
         raise HTTPException(status_code=404, detail="知识不存在")
     if role == MemberRole.member and item.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能删除自己添加的知识")
+    file_path = item.file_path
     await db.delete(item)
     await db.commit()
+    if file_path:
+        from app.services.file_storage import remove_upload
+        remove_upload(file_path)
 
 
 @router.get("/api/organizations/{org_id}/ai/history", response_model=List[ChatMessageOut])

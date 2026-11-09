@@ -7,6 +7,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        {/* Kept as a compatibility URL for old bookmarks; local mode has no login screen. */}
         <Route path="/login" element={<Navigate to="/" replace />} />
         <Route path="/" element={<RequireAuth><WorkspacePage /></RequireAuth>} />
         <Route path="/workspace" element={<RequireAuth><WorkspacePage /></RequireAuth>} />

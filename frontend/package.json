@@ -10,11 +10,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@types/three": "^0.187.0",
     "antd": "^6.6.5",
     "axios": "^1.20.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.4",
+    "three": "^0.187.0",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

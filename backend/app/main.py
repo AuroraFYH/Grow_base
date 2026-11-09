@@ -28,7 +28,28 @@ app.add_middleware(
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_add_missing_knowledge_columns)
     await _rescue_stuck_items()
+
+
+def _add_missing_knowledge_columns(sync_conn):
+    """Small compatibility migration for local databases created before uploads."""
+    from sqlalchemy import inspect
+
+    inspector = inspect(sync_conn)
+    existing = {column["name"] for column in inspector.get_columns("knowledge_items")}
+    additions = {
+        "file_path": "VARCHAR(2000)",
+        "file_name": "VARCHAR(500)",
+        "file_mime_type": "VARCHAR(200)",
+        "file_size": "INTEGER",
+        "processing_instructions": "TEXT",
+    }
+    for name, sql_type in additions.items():
+        if name not in existing:
+            sync_conn.exec_driver_sql(
+                f"ALTER TABLE knowledge_items ADD COLUMN {name} {sql_type}"
+            )
 
 async def _rescue_stuck_items():
     """On startup, re-queue any items stuck in 'processing' from a previous run."""

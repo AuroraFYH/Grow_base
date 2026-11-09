@@ -1,0 +1,188 @@
+:root {
+  font-family: Inter, "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #e7eefc;
+  background: #070a13;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #070a13;
+}
+
+#root { min-height: 100vh; }
+
+.auth-state {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  box-sizing: border-box;
+  color: #aebbd3;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(53, 110, 195, 0.16), transparent 42%),
+    #070a13;
+}
+
+.auth-state-error .ant-alert {
+  max-width: 440px;
+  background: rgba(20, 29, 47, 0.88);
+  border-color: rgba(247, 190, 72, 0.35);
+}
+
+.auth-state-error .ant-alert-message,
+.auth-state-error .ant-alert-description { color: #dce7f8 !important; }
+
+.auth-retry {
+  border: 1px solid rgba(110, 231, 249, 0.45);
+  border-radius: 6px;
+  padding: 8px 16px;
+  color: #6ee7f9;
+  background: rgba(31, 78, 121, 0.2);
+  cursor: pointer;
+}
+
+.auth-retry:hover { background: rgba(31, 78, 121, 0.4); }
+
+button, input, textarea, select { font: inherit; }
+
+.ant-modal-content,
+.ant-modal-header {
+  background: #0e1523 !important;
+  color: #e7eefc !important;
+}
+
+.ant-modal-title,
+.ant-modal-close,
+.ant-form-item-label > label,
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-input-textarea,
+.ant-select-selector {
+  color: #e7eefc !important;
+}
+
+.ant-modal-close:hover { color: #6ee7f9 !important; }
+.ant-input, .ant-input-affix-wrapper, .ant-select-selector {
+  background: #0a101c !important;
+  border-color: rgba(135, 159, 201, .22) !important;
+}
+.ant-input::placeholder { color: #6d7b96 !important; }
+.ant-form-item-explain-error { color: #fb7185 !important; }
+
+.add-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 4px;
+  margin-bottom: 18px;
+  border: 1px solid rgba(135, 159, 201, .18);
+  border-radius: 8px;
+  background: rgba(6, 11, 22, .66);
+}
+
+.add-mode-tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 0;
+  border-radius: 5px;
+  color: #8291ac;
+  background: transparent;
+  cursor: pointer;
+}
+
+.add-mode-tabs button.active {
+  color: #dffcff;
+  background: rgba(35, 136, 155, .24);
+  box-shadow: inset 0 0 0 1px rgba(110, 231, 249, .24);
+}
+
+.hidden-file-input { display: none; }
+
+.file-dropzone {
+  width: 100%;
+  min-height: 126px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 20px;
+  margin-bottom: 16px;
+  border: 1px dashed rgba(110, 231, 249, .38);
+  border-radius: 8px;
+  color: #dbe7f8;
+  background: rgba(7, 17, 30, .72);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.file-dropzone:hover,
+.file-dropzone.has-file {
+  border-color: rgba(110, 231, 249, .72);
+  background: rgba(18, 59, 72, .3);
+}
+
+.file-drop-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid rgba(110, 231, 249, .3);
+  border-radius: 8px;
+  color: #6ee7f9;
+  background: rgba(34, 151, 171, .13);
+}
+
+.file-dropzone > span:last-child {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  text-align: left;
+}
+
+.file-dropzone strong {
+  max-width: 380px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-dropzone small,
+.file-process-option small { color: #7686a3; }
+
+.file-process-option {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 13px 14px;
+  margin-bottom: 18px;
+  border: 1px solid rgba(135, 159, 201, .14);
+  border-radius: 7px;
+  background: rgba(8, 14, 25, .52);
+}
+
+.file-process-option .ant-checkbox-wrapper { color: #dbe7f8; }
+.status-archived { color: #aab7cb; background: rgba(125, 143, 170, .13); border-color: rgba(144, 159, 182, .22); }
+
+.piggy-modal .add-mode-tabs,
+.piggy-modal .file-process-option { background: rgba(255, 247, 244, .72); border-color: rgba(221, 136, 155, .2); }
+.piggy-modal .add-mode-tabs button { color: #9a6672; }
+.piggy-modal .add-mode-tabs button.active { color: #8f4056; background: #ffe0e8; box-shadow: inset 0 0 0 1px rgba(212, 108, 137, .22); }
+.piggy-modal .file-dropzone { color: #7e4c5c; background: #fff9f7; border-color: rgba(212, 108, 137, .42); }
+.piggy-modal .file-dropzone:hover,
+.piggy-modal .file-dropzone.has-file { background: #fff0f3; border-color: #d66f8b; }
+.piggy-modal .file-drop-icon { color: #c95b7b; background: #ffe5eb; border-color: rgba(212, 108, 137, .28); }
+.piggy-modal .file-process-option .ant-checkbox-wrapper { color: #7e4c5c; }
+.piggy-modal .file-dropzone small,
+.piggy-modal .file-process-option small { color: #a77884; }
