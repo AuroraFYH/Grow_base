@@ -7,6 +7,8 @@ import { orgApi } from '../api/organizations'
 import type { CategoryOut, ClassificationConfig, ClassificationTemplate, MemberOut, OrganizationOut } from '../api/organizations'
 import { knowledgeApi } from '../api/knowledge'
 import type { ChatMessage, KnowledgeItem } from '../api/knowledge'
+import { feedsApi } from '../api/feeds'
+import type { DigestSubscription } from '../api/feeds'
 import { useAuthStore } from '../store/auth'
 import KnowledgeOrb from '../components/KnowledgeOrb'
 
@@ -402,6 +404,10 @@ export default function WorkspacePage() {
   const [teamOpen, setTeamOpen] = useState(false)
   const [teamLoading, setTeamLoading] = useState(false)
   const [members, setMembers] = useState<MemberOut[]>([])
+  const [subscriptions, setSubscriptions] = useState<DigestSubscription[]>([])
+  const [digestPickerOpen, setDigestPickerOpen] = useState(false)
+  const [selectedDigestId, setSelectedDigestId] = useState<number | null>(null)
+  const [digestRunningId, setDigestRunningId] = useState<number | null>(null)
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatInput, setChatInput] = useState('')
@@ -441,6 +447,7 @@ export default function WorkspacePage() {
       }
     }).catch(() => {})
     orgApi.getClassificationTemplates().then(({ data }) => setTemplates(data)).catch(() => {})
+    feedsApi.list().then(({ data }) => setSubscriptions(data)).catch(() => {})
   }, [])
 
   async function loadOrgState(orgId: number, knownOrgs?: OrganizationOut[]) {
@@ -495,6 +502,9 @@ export default function WorkspacePage() {
 
   const activeState = activeOrgId ? orgStates[activeOrgId] : null
   const activeOrg = orgs.find((o) => o.id === activeOrgId) ?? activeState?.org ?? null
+  const activeSubscriptions = subscriptions.filter(
+    (subscription) => subscription.organization_id === activeOrgId && subscription.enabled
+  )
   const categories = activeState?.categories ?? []
   const config = activeState?.config ?? null
 
@@ -590,6 +600,39 @@ export default function WorkspacePage() {
     } catch (err: any) {
       message.error(err.response?.data?.detail || '重新整理失败')
     }
+  }
+
+  const runDigest = async (subscription: DigestSubscription) => {
+    setDigestRunningId(subscription.id)
+    setDigestPickerOpen(false)
+    try {
+      const { data } = await feedsApi.run(subscription.id)
+      setSubscriptions((items) => items.map((item) => item.id === data.id ? data : item))
+      if (data.last_status === 'error') {
+        message.error(data.last_error || '简讯生成失败，请检查工作流')
+        return
+      }
+      await loadOrgState(subscription.organization_id)
+      message.success(`「${subscription.name}」已生成并写入知识库`)
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '简讯生成失败')
+    } finally {
+      setDigestRunningId(null)
+    }
+  }
+
+  const handleRunDigest = () => {
+    if (activeSubscriptions.length === 0) {
+      message.info('当前知识库还没有启用的简讯订阅，请先创建订阅')
+      navigate('/settings')
+      return
+    }
+    if (activeSubscriptions.length === 1) {
+      void runDigest(activeSubscriptions[0])
+      return
+    }
+    setSelectedDigestId(activeSubscriptions[0].id)
+    setDigestPickerOpen(true)
   }
 
   const handleTemplateSave = async (key: string, prompt: string, replace: boolean) => {
@@ -886,6 +929,17 @@ export default function WorkspacePage() {
                     <Icon d={I.search} size={13} />
                     <input placeholder="搜索知识…" value={search} onChange={(e) => setSearch(e.target.value)} />
                   </div>
+                  {activeOrg?.can_add_knowledge && (
+                    <button
+                      className={`ws-btn ws-digest-btn${digestRunningId ? ' loading' : ''}`}
+                      onClick={handleRunDigest}
+                      disabled={digestRunningId !== null}
+                      title={activeSubscriptions.length > 0 ? '立即采集并生成最新简讯' : '先创建自动简讯订阅'}
+                    >
+                      <Icon d={I.refresh} size={13} />
+                      {digestRunningId ? '采集中…' : '生成简讯'}
+                    </button>
+                  )}
                   {activeOrg?.current_user_role !== 'member' && <button className="ws-btn" onClick={handleReprocess}><Icon d={I.refresh} size={13} /></button>}
                   {activeOrg?.can_add_knowledge && (
                     <button className="ws-btn ws-btn-primary" onClick={() => setAddOpen(true)}>
@@ -1175,6 +1229,39 @@ export default function WorkspacePage() {
             <Icon d={I.users} size={14} />{joinLoading ? '加入中…' : '加入知识库'}
           </button>
         </Form>
+      </Modal>
+
+      <Modal
+        rootClassName={appearance.theme === 'piggy' ? 'piggy-modal' : ''}
+        title="选择要生成的简讯"
+        open={digestPickerOpen}
+        onCancel={() => setDigestPickerOpen(false)}
+        footer={null}
+        width={460}
+      >
+        <div className="digest-picker">
+          <p className="form-help">当前知识库有多个订阅，请选择本次要运行的订阅。</p>
+          <Select
+            value={selectedDigestId}
+            onChange={setSelectedDigestId}
+            style={{ width: '100%' }}
+            options={activeSubscriptions.map((subscription) => ({
+              value: subscription.id,
+              label: `${subscription.name} · ${subscription.topics.join(' / ')}`,
+            }))}
+          />
+          <button
+            className="ws-btn ws-btn-primary"
+            style={{ width: '100%', justifyContent: 'center', marginTop: 16 }}
+            disabled={!selectedDigestId}
+            onClick={() => {
+              const subscription = activeSubscriptions.find((item) => item.id === selectedDigestId)
+              if (subscription) void runDigest(subscription)
+            }}
+          >
+            <Icon d={I.refresh} size={13} />立即生成
+          </button>
+        </div>
       </Modal>
 
       <Modal rootClassName={appearance.theme === 'piggy' ? 'piggy-modal' : ''} title="团队与权限" open={teamOpen} onCancel={() => setTeamOpen(false)} footer={null} width={760}>
@@ -1611,6 +1698,8 @@ html, body { height: 100%; margin: 0; padding: 0; }
 .ws-btn:disabled { opacity: .5; cursor: not-allowed; }
 .ws-btn-primary { background: var(--ws-accent); border-color: var(--ws-accent); color: #1e1e2e; }
 .ws-btn-primary:hover:not(:disabled) { opacity: .88; background: var(--ws-accent); }
+.ws-digest-btn { border-color: color-mix(in srgb, var(--ws-accent) 44%, var(--ws-border)); color: var(--ws-accent); background: color-mix(in srgb, var(--ws-accent) 8%, var(--ws-item)); }
+.ws-digest-btn:hover:not(:disabled) { border-color: var(--ws-accent); background: color-mix(in srgb, var(--ws-accent) 14%, var(--ws-item)); }
 .ws-icon-btn {
   width: 24px; height: 24px; border: none; background: transparent; color: var(--ws-muted);
   cursor: pointer; border-radius: 4px; display: flex; align-items: center; justify-content: center;
@@ -1753,8 +1842,8 @@ html, body { height: 100%; margin: 0; padding: 0; }
   .ws-breadcrumb { min-width: 0; max-width: 116px; overflow: hidden; white-space: nowrap; }
   .ws-breadcrumb span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ws-topbar-right { min-width: 0; gap: 4px; }
-  .ws-search-box, .ws-topbar-right > .ws-btn:not(.ws-personalize-btn):not(.ws-btn-primary) { display: none; }
-  .ws-personalize-btn, .ws-topbar-right .ws-btn-primary { justify-content: center; width: 34px; padding-left: 0; padding-right: 0; font-size: 0; }
+  .ws-search-box, .ws-topbar-right > .ws-btn:not(.ws-personalize-btn):not(.ws-btn-primary):not(.ws-digest-btn) { display: none; }
+  .ws-personalize-btn, .ws-topbar-right .ws-btn-primary, .ws-topbar-right .ws-digest-btn { justify-content: center; width: 34px; padding-left: 0; padding-right: 0; font-size: 0; }
   .ws-content { min-width: 0; padding: 16px 12px 28px; }
   .book-shelf-panel { min-width: 0; padding: 18px 14px 0; }
   .shelf-wood { margin-left: -14px; margin-right: -14px; }

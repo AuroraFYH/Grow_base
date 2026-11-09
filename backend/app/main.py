@@ -1,11 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import engine, Base, AsyncSessionLocal
-from app.api import auth, organizations, classification, knowledge
+from app.api import auth, organizations, classification, knowledge, feeds
 from app.api import llm_config
 import app.models.user
 import app.models.organization
 import app.models.knowledge
+import app.models.feed
+
+_digest_scheduler_task = None
 
 app = FastAPI(title="GrowBase API", version="0.1.0")
 
@@ -26,10 +29,22 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
+    global _digest_scheduler_task
+    import asyncio
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_run_compatibility_migrations)
     await _rescue_stuck_items()
+    from app.services.digest_service import digest_scheduler_loop
+    _digest_scheduler_task = asyncio.create_task(digest_scheduler_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    global _digest_scheduler_task
+    if _digest_scheduler_task:
+        _digest_scheduler_task.cancel()
+        _digest_scheduler_task = None
 
 
 def _run_compatibility_migrations(sync_conn):
@@ -113,6 +128,7 @@ app.include_router(organizations.router)
 app.include_router(classification.router)
 app.include_router(knowledge.router)
 app.include_router(llm_config.router)
+app.include_router(feeds.router)
 
 @app.get("/health")
 async def health():

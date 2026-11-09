@@ -191,6 +191,39 @@ AI 根据目录规则推荐分类、摘要和标签
 
 ## 10. 数据流图（DFD）
 
+### 10.8 自动简讯与知识库自生长接入
+
+GrowBase 支持把外部采集工作流接入为定时订阅。用户在“AI 设置 → 自动简讯与知识库自生长”中选择知识库、话题、来源和发送频率，并填写工作流 Webhook；系统按计划调用工作流，将返回的简讯写入知识库，填写飞书机器人 Webhook 后还会同步发送到飞书。
+
+工作流收到的请求为 JSON：
+
+```json
+{
+  "subscription_id": 1,
+  "user": {"id": 2, "email": "user@example.com", "username": "Fei"},
+  "organization": {"id": 3, "name": "AI 研究"},
+  "topics": ["AI Agent", "具身智能"],
+  "sources": ["news", "social", "rss"],
+  "frequency": "daily",
+  "period": "过去 24 小时",
+  "callback_token": "..."
+}
+```
+
+工作流应同步返回以下任一 JSON 结构：
+
+```json
+{"title": "AI 行业简讯", "content": "Markdown 内容"}
+```
+
+或者返回条目列表，GrowBase 会自动转换成 Markdown：
+
+```json
+{"title": "AI 行业简讯", "items": [{"title": "标题", "summary": "摘要", "url": "https://..."}]}
+```
+
+工作流密钥会以 `Authorization: Bearer ...` 发送；工作流密钥和飞书 Webhook 在本地数据库中使用项目现有加密方案保存。当前定时器随后端进程运行，每分钟检查一次到期订阅；部署到多进程生产环境时，应保证只启动一个调度实例。
+
 ### 10.1 DFD 的用途
 
 数据流图描述数据在系统中的来源、处理、存储和去向。它关注“数据经过哪些加工”，不表示程序语句的执行顺序，也不等同于流程图。

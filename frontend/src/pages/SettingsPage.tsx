@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
 import {
-  Button, Card, Form, Input, Select, Space, Typography, message, Tag, Divider,
+  Button, Card, Checkbox, Form, Input, Select, Space, Typography, message, Tag, Divider, Switch,
 } from 'antd'
 import { ArrowLeftOutlined, CheckCircleOutlined, SettingOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { llmConfigApi } from '../api/llm_config'
 import type { LLMConfigOut } from '../api/llm_config'
+import { feedsApi } from '../api/feeds'
+import type { DigestSubscription, DigestSubscriptionPayload } from '../api/feeds'
+import { orgApi } from '../api/organizations'
+import type { OrganizationOut } from '../api/organizations'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -53,6 +57,10 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [config, setConfig] = useState<LLMConfigOut | null>(null)
   const [provider, setProvider] = useState('openai')
+  const [orgs, setOrgs] = useState<OrganizationOut[]>([])
+  const [subscriptions, setSubscriptions] = useState<DigestSubscription[]>([])
+  const [feedSaving, setFeedSaving] = useState(false)
+  const [feedForm] = Form.useForm()
 
   useEffect(() => {
     llmConfigApi.get().then(({ data }) => {
@@ -70,6 +78,14 @@ export default function SettingsPage() {
       })
     }).catch(() => {})
   }, [form])
+
+  useEffect(() => {
+    Promise.all([orgApi.list(), feedsApi.list()]).then(([orgResult, feedResult]) => {
+      setOrgs(orgResult.data)
+      setSubscriptions(feedResult.data)
+      if (orgResult.data[0]) feedForm.setFieldValue('organization_id', orgResult.data[0].id)
+    }).catch(() => {})
+  }, [feedForm])
 
   const handleProviderChange = (value: string) => {
     setProvider(value)
@@ -108,6 +124,27 @@ export default function SettingsPage() {
   }
 
   const preset = PROVIDER_PRESETS[provider]
+
+  const handleFeedSave = async (values: any) => {
+    setFeedSaving(true)
+    try {
+      const payload: DigestSubscriptionPayload = {
+        ...values,
+        topics: String(values.topics).split(/[,，\n]/).map((value: string) => value.trim()).filter(Boolean),
+        sources: values.sources || ['news', 'social'],
+        send_hour: Number(values.send_hour ?? 9),
+        send_minute: Number(values.send_minute ?? 0),
+      }
+      const { data } = await feedsApi.create(payload)
+      setSubscriptions((items) => [data, ...items])
+      feedForm.resetFields(['name', 'topics', 'workflow_url', 'workflow_secret', 'feishu_webhook_url'])
+      message.success('自动简讯订阅已创建')
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '订阅创建失败')
+    } finally {
+      setFeedSaving(false)
+    }
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: '#f0f2f5' }}>
@@ -235,6 +272,66 @@ export default function SettingsPage() {
             <li>配置 Obsidian vault 路径后，每条知识整理完成后会自动生成 <strong>视频笔记</strong> 和 <strong>知识节点</strong> 两类文件，并自动打 [[wikilinks]]</li>
             <li>在 AI 助手里发送「<strong>重新生成链接</strong>，你的补充要求」可以让 AI 重新判断节点间的链接关系</li>
           </ul>
+        </Card>
+
+        <Card style={{ marginTop: 16 }}>
+          <Title level={5}>自动简讯与知识库自生长</Title>
+          <Paragraph type="secondary">
+            配置你已有的采集工作流。GrowBase 会按计划把话题和来源发给工作流，工作流返回的简讯自动写入选定知识库；填写飞书机器人 Webhook 后还会同步发送。
+          </Paragraph>
+          <Form
+            form={feedForm}
+            layout="vertical"
+            initialValues={{ frequency: 'daily', send_hour: 9, send_minute: 0, timezone: 'Asia/Shanghai', sources: ['news', 'social'] }}
+            onFinish={handleFeedSave}
+          >
+            <Form.Item name="organization_id" label="写入知识库" rules={[{ required: true, message: '请选择知识库' }]}>
+              <Select placeholder="选择一个知识库">
+                {orgs.map((org) => <Select.Option key={org.id} value={org.id}>{org.name}</Select.Option>)}
+              </Select>
+            </Form.Item>
+            <Form.Item name="name" label="订阅名称" rules={[{ required: true, message: '请填写订阅名称' }]}>
+              <Input placeholder="例如：AI 行业每日简讯" />
+            </Form.Item>
+            <Form.Item name="topics" label="感兴趣的话题" rules={[{ required: true, message: '至少填写一个话题' }]}>
+              <Input.TextArea rows={2} placeholder="例如：AI Agent，具身智能，独立开发（逗号或换行分隔）" />
+            </Form.Item>
+            <Form.Item name="sources" label="内容来源">
+              <Checkbox.Group options={[{ label: '新闻', value: 'news' }, { label: '社交媒体 / 推文', value: 'social' }, { label: 'GitHub', value: 'github' }, { label: '博客 / RSS', value: 'rss' }]} />
+            </Form.Item>
+            <Space.Compact block>
+              <Form.Item name="frequency" label="频率" style={{ width: '34%' }}><Select><Select.Option value="daily">每天</Select.Option><Select.Option value="weekly">每周</Select.Option></Select></Form.Item>
+              <Form.Item name="send_hour" label="发送时间（时）" style={{ width: '33%' }}><Input type="number" min={0} max={23} /></Form.Item>
+              <Form.Item name="send_minute" label="分" style={{ width: '33%' }}><Input type="number" min={0} max={59} /></Form.Item>
+            </Space.Compact>
+            <Form.Item name="workflow_url" label="工作流 Webhook 地址" rules={[{ required: true, message: '请填写工作流 Webhook' }, { type: 'url', message: '请输入有效 URL' }]}>
+              <Input placeholder="https://你的工作流.example.com/webhook" />
+            </Form.Item>
+            <Form.Item name="workflow_secret" label="工作流密钥（可选）">
+              <Input.Password placeholder="会以 Bearer Token 发送" />
+            </Form.Item>
+            <Form.Item name="feishu_webhook_url" label="飞书机器人 Webhook（可选）" rules={[{ type: 'url', message: '请输入有效 URL' }]}>
+              <Input placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." />
+            </Form.Item>
+            <Button type="primary" htmlType="submit" loading={feedSaving} block>创建自动简讯订阅</Button>
+          </Form>
+
+          {subscriptions.length > 0 && <Divider />}
+          {subscriptions.map((subscription) => (
+            <div key={subscription.id} style={{ padding: '12px 0', borderBottom: '1px solid #f0f0f0' }}>
+              <Space style={{ width: '100%', justifyContent: 'space-between' }} align="start">
+                <div>
+                  <Text strong>{subscription.name}</Text>
+                  <div style={{ marginTop: 4 }}><Tag color={subscription.last_status === 'error' ? 'error' : subscription.enabled ? 'green' : 'default'}>{subscription.last_status === 'error' ? '上次失败' : subscription.enabled ? '运行中' : '已停用'}</Tag><Text type="secondary">{subscription.topics.join(' · ')}</Text></div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{subscription.frequency === 'daily' ? '每天' : '每周'} {String(subscription.send_hour).padStart(2, '0')}:{String(subscription.send_minute).padStart(2, '0')} · 下次 {subscription.next_run_at ? new Date(subscription.next_run_at).toLocaleString() : '未计划'}</Text>
+                  {subscription.last_error && <div style={{ color: '#cf1322', fontSize: 12, marginTop: 4 }}>{subscription.last_error}</div>}
+                </div>
+                <Space>
+                  <Switch size="small" checked={subscription.enabled} onChange={async (enabled) => { const { data } = await feedsApi.update(subscription.id, { enabled }); setSubscriptions((items) => items.map((item) => item.id === data.id ? data : item)) }} />
+                </Space>
+              </Space>
+            </div>
+          ))}
         </Card>
       </div>
     </div>

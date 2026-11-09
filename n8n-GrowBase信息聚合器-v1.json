@@ -1,0 +1,435 @@
+{
+  "name": "GrowBase 信息聚合器 v1",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## GrowBase 信息聚合器 v1\n\n1. 此工作流由 GrowBase 通过 Webhook 触发，不再自行定时，也不直接发送飞书。\n2. 导入后确认 Twitter、YouTube、DeepSeek 三项凭据已正确关联。\n3. 激活工作流后，将生产地址 `http://127.0.0.1:5678/webhook/growbase-digest-v1` 填入 GrowBase 的工作流 Webhook。\n4. GrowBase 负责话题、频率、目标知识库和飞书机器人配置。\n5. 如果 n8n 不在本机，请把 127.0.0.1 换成 n8n 实际可访问地址。\n6. 当前 Webhook 用于本地部署，若开放到公网，请在 Webhook 节点增加 Header Auth。",
+        "height": 280,
+        "width": 500
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470100",
+      "name": "使用说明",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-1160, -700]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "growbase-digest-v1",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470101",
+      "name": "GrowBase Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-1160, 80],
+      "webhookId": "8d68c808-c233-4cad-9cb7-01b28d470100"
+    },
+    {
+      "parameters": {
+        "jsCode": "const request = $json.body ?? $json;\nconst subscription = request.subscription ?? request;\nconst topics = (Array.isArray(subscription.topics) ? subscription.topics : [subscription.topics || 'AI'])\n  .map(v => String(v).trim()).filter(Boolean).slice(0, 12);\nconst sources = (Array.isArray(subscription.sources) ? subscription.sources : ['news', 'social', 'github'])\n  .map(v => String(v).toLowerCase().trim()).filter(Boolean);\nconst watchAccounts = (Array.isArray(subscription.watch_accounts) ? subscription.watch_accounts : ['OpenAI', 'GoogleDeepMind', 'GoogleAIStudio'])\n  .map(v => String(v).replace(/^@/, '').trim()).filter(Boolean).slice(0, 10);\nconst hours = subscription.frequency === 'weekly' || String(subscription.period || request.period || '').includes('7') ? 168 : 24;\nconst periodStart = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();\nreturn [{ json: {\n  run_id: request.run_id || `growbase-${request.subscription_id || 'manual'}-${Date.now()}`,\n  subscription_id: request.subscription_id || null,\n  organization: request.organization || {},\n  topics,\n  sources,\n  watch_accounts: watchAccounts,\n  frequency: subscription.frequency || request.frequency || 'daily',\n  period_hours: hours,\n  period_start: periodStart,\n  search_query: topics.map(topic => `\\\"${topic}\\\"`).join(' OR '),\n  youtube_query: topics.join(' '),\n  reddit_period: hours > 24 ? 'week' : 'day',\n  language: subscription.language || 'zh-CN',\n  minimum_score: Number(subscription.minimum_score || 0),\n  requested_at: new Date().toISOString()\n} }];"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470102",
+      "name": "Normalize Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-940, 80]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "watch_accounts",
+        "options": {}
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470103",
+      "name": "Split Twitter Accounts",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [-720, -420]
+    },
+    {
+      "parameters": {
+        "url": "https://api.twitterapi.io/twitter/user/last_tweets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "userName", "value": "={{ $json.watch_accounts }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470104",
+      "name": "Fetch Twitter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-500, -420],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "jHqcyQe1kdjRj1RI",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Normalize Request').first().json;\nconst cutoff = Date.parse(cfg.period_start);\nconst output = [];\nfor (const input of $input.all()) {\n  const tweets = input.json?.data?.tweets ?? input.json?.tweets ?? [];\n  for (const tweet of tweets) {\n    const published = tweet.createdAt || tweet.created_at || '';\n    if (published && Date.parse(published) < cutoff) continue;\n    const text = tweet.text || tweet.retweeted_tweet?.text || '';\n    const author = tweet.author?.name || tweet.author?.userName || tweet.userName || 'Twitter';\n    const heat = Number(tweet.likeCount || 0) + Number(tweet.retweetCount || 0) * 2 + Number(tweet.replyCount || 0) * 1.5 + Number(tweet.quoteCount || 0) * 2;\n    if (!text || !tweet.url) continue;\n    output.push({ json: { platform: 'twitter', source: author, title: text.slice(0, 180), content: text.slice(0, 800), url: tweet.url, published_at: published, heat_score: Math.round(heat), metrics: { likes: Number(tweet.likeCount || 0), reposts: Number(tweet.retweetCount || 0), replies: Number(tweet.replyCount || 0), views: Number(tweet.viewCount || 0) } } });\n  }\n}\nreturn output.slice(0, 30);"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470105",
+      "name": "Normalize Twitter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-260, -420],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "https://www.reddit.com/search.json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q", "value": "={{ $json.search_query }}" },
+            { "name": "sort", "value": "hot" },
+            { "name": "t", "value": "={{ $json.reddit_period }}" },
+            { "name": "limit", "value": "25" },
+            { "name": "restrict_sr", "value": "false" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "User-Agent", "value": "GrowBase/1.0 knowledge digest" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470106",
+      "name": "Fetch Reddit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-700, -260],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const children = $json?.data?.children ?? [];\nreturn children.map(row => row.data).filter(Boolean).map(post => ({ json: { platform: 'reddit', source: `r/${post.subreddit || 'reddit'}`, title: post.title || '', content: (post.selftext || '').slice(0, 800), url: post.url?.startsWith('http') ? post.url : `https://www.reddit.com${post.permalink || ''}`, published_at: post.created_utc ? new Date(post.created_utc * 1000).toISOString() : '', heat_score: Number(post.ups || post.score || 0), metrics: { likes: Number(post.ups || post.score || 0), comments: Number(post.num_comments || 0) } } })).slice(0, 20);"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470107",
+      "name": "Normalize Reddit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-460, -260],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/youtube/v3/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "part", "value": "snippet" },
+            { "name": "q", "value": "={{ $json.youtube_query }}" },
+            { "name": "order", "value": "viewCount" },
+            { "name": "maxResults", "value": "15" },
+            { "name": "regionCode", "value": "US" },
+            { "name": "type", "value": "video" },
+            { "name": "publishedAfter", "value": "={{ $json.period_start }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470108",
+      "name": "Fetch YouTube",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-700, -100],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "ncEkHpM4jEQl7gld",
+          "name": "Query Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const videos = $json?.items ?? [];\nreturn videos.filter(video => video.id?.videoId).map((video, index) => ({ json: { platform: 'youtube', source: video.snippet?.channelTitle || 'YouTube', title: video.snippet?.title || '', content: (video.snippet?.description || '').slice(0, 800), url: `https://www.youtube.com/watch?v=${video.id.videoId}`, published_at: video.snippet?.publishedAt || '', heat_score: Math.max(1, 100 - index * 5), metrics: {} } }));"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470109",
+      "name": "Normalize YouTube",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-460, -100],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "https://api.github.com/search/repositories",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q", "value": "={{ $json.search_query + ' pushed:>=' + $json.period_start.slice(0, 10) }}" },
+            { "name": "sort", "value": "stars" },
+            { "name": "order", "value": "desc" },
+            { "name": "per_page", "value": "15" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.github+json" },
+            { "name": "User-Agent", "value": "GrowBase" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470110",
+      "name": "Fetch GitHub",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-700, 60],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const repos = $json?.items ?? [];\nreturn repos.map(repo => ({ json: { platform: 'github', source: repo.owner?.login || 'GitHub', title: repo.full_name || repo.name || '', content: (repo.description || '').slice(0, 800), url: repo.html_url || '', published_at: repo.pushed_at || repo.updated_at || '', heat_score: Number(repo.stargazers_count || 0), metrics: { stars: Number(repo.stargazers_count || 0), forks: Number(repo.forks_count || 0) } } })).slice(0, 15);"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470111",
+      "name": "Normalize GitHub",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-460, 60],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470112",
+      "name": "RSS The Verge",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [-700, 220],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Normalize Request').first().json; const cutoff = Date.parse(cfg.period_start); return $input.all().map(i => i.json).filter(i => i.link && (!i.isoDate || Date.parse(i.isoDate) >= cutoff)).map(i => ({ json: { platform: 'rss', source: 'The Verge', title: i.title || '', content: (i.contentSnippet || i.content || '').replace(/<[^>]+>/g, ' ').slice(0, 800), url: i.link, published_at: i.isoDate || i.pubDate || '', heat_score: 0, metrics: {} } })).slice(0, 15);"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470113",
+      "name": "Normalize The Verge",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-460, 220],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "https://techcrunch.com/category/artificial-intelligence/feed/"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470114",
+      "name": "RSS TechCrunch",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [-700, 380],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Normalize Request').first().json; const cutoff = Date.parse(cfg.period_start); return $input.all().map(i => i.json).filter(i => i.link && (!i.isoDate || Date.parse(i.isoDate) >= cutoff)).map(i => ({ json: { platform: 'rss', source: 'TechCrunch', title: i.title || '', content: (i.contentSnippet || i.content || '').replace(/<[^>]+>/g, ' ').slice(0, 800), url: i.link, published_at: i.isoDate || i.pubDate || '', heat_score: 0, metrics: {} } })).slice(0, 15);"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470115",
+      "name": "Normalize TechCrunch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-460, 380],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "https://www.nytimes.com/svc/collections/v1/publish/https://www.nytimes.com/spotlight/artificial-intelligence/rss.xml"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470116",
+      "name": "RSS NYTimes",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [-700, 540],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Normalize Request').first().json; const cutoff = Date.parse(cfg.period_start); return $input.all().map(i => i.json).filter(i => i.link && (!i.isoDate || Date.parse(i.isoDate) >= cutoff)).map(i => ({ json: { platform: 'rss', source: 'The New York Times', title: i.title || '', content: (i.contentSnippet || i.content || '').replace(/<[^>]+>/g, ' ').slice(0, 800), url: i.link, published_at: i.isoDate || i.pubDate || '', heat_score: 0, metrics: {} } })).slice(0, 15);"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470117",
+      "name": "Normalize NYTimes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-460, 540],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "http://searxng:8080/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q", "value": "={{ $json.search_query }}" },
+            { "name": "format", "value": "json" },
+            { "name": "categories", "value": "news" },
+            { "name": "time_range", "value": "={{ $json.frequency === 'weekly' ? 'week' : 'day' }}" },
+            { "name": "language", "value": "all" },
+            { "name": "safesearch", "value": "1" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470124",
+      "name": "Search Web News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-700, 700],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $json?.results ?? [];\nreturn results.map((item, index) => { let source = item.engine || 'Web'; try { source = new URL(item.url).hostname.replace(/^www\\./, ''); } catch {} return { json: { platform: 'web', source, title: item.title || '', content: (item.content || '').replace(/<[^>]+>/g, ' ').slice(0, 800), url: item.url || '', published_at: item.publishedDate || item.published_date || '', heat_score: Math.max(1, 100 - index * 3), metrics: {} } }; }).filter(item => item.json.url && item.json.title).slice(0, 20);"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470125",
+      "name": "Normalize Web News",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-460, 700],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 8
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470118",
+      "name": "Merge Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [20, 80]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Normalize Request').first().json;\nconst selected = new Set(cfg.sources);\nconst sourceEnabled = platform => {\n  if (platform === 'rss' || platform === 'web') return selected.has('news') || selected.has('rss');\n  if (platform === 'github') return selected.has('github');\n  return selected.has('social') || selected.has(platform);\n};\nconst topicWords = cfg.topics.map(t => t.toLowerCase());\nconst seen = new Set();\nconst candidates = [];\nfor (const input of $input.all()) {\n  const item = input.json;\n  if (!item?.url || !item?.title || !sourceEnabled(item.platform)) continue;\n  const canonical = String(item.url).split('#')[0].replace(/[?&](utm_[^=]+|ref)=[^&]+/g, '');\n  if (seen.has(canonical)) continue;\n  seen.add(canonical);\n  const text = `${item.title} ${item.content || ''}`.toLowerCase();\n  const keywordHits = topicWords.filter(word => text.includes(word)).length;\n  item.relevance_hint = keywordHits;\n  item.rank_score = Math.log10(Math.max(1, Number(item.heat_score || 0)) + 1) * 10 + keywordHits * 25;\n  candidates.push(item);\n}\ncandidates.sort((a, b) => b.rank_score - a.rank_score);\nconst limited = candidates.slice(0, 45);\nreturn [{ json: { ...cfg, collected_count: candidates.length, candidates: limited, candidate_json: JSON.stringify(limited) } }];"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470119",
+      "name": "Prepare Candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 80]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=你是 GrowBase 的中文科技情报编辑。请根据候选资料，为用户生成一份可直接存入知识库的每日或每周简讯。\n\n用户关注话题：{{ $json.topics.join('、') }}\n时间范围：过去 {{ $json.period_hours }} 小时\n候选资料数量：{{ $json.collected_count }}\n候选资料 JSON：\n{{ $json.candidate_json }}\n\n要求：\n1. 只允许使用候选资料中的事实，不得编造。\n2. 优先选择与用户话题相关、热度高、信息密度高的内容，最多保留 15 条。\n3. 输出中文；标题或正文为外文时翻译并准确概括。\n4. 正文使用 Markdown，按实际内容自然分成“重要新闻”“干货与深度内容”“热门推文与社区讨论”“视频与项目”几个部分；没有内容的部分不要输出。\n5. 每条包含：中文标题、1 至 3 句价值摘要、来源、原文链接。不要把纯代码仓库写成教程。\n6. 开头先给出 3 至 5 条“今日值得关注”，说明信息之间的趋势或联系，而不是简单重复标题。\n7. 严格返回一个 JSON 对象，不要使用 Markdown 代码围栏。结构必须是：\n{\"title\":\"简讯标题\",\"content\":\"完整 Markdown 正文\",\"items\":[{\"title\":\"中文标题\",\"summary\":\"摘要\",\"url\":\"原始链接\",\"source\":\"来源\",\"platform\":\"平台\",\"published_at\":\"发布时间\",\"heat_score\":0}]}"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470120",
+      "name": "Generate Digest",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [500, 80]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470121",
+      "name": "DeepSeek Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
+      "typeVersion": 1,
+      "position": [500, 300],
+      "credentials": {
+        "deepSeekApi": {
+          "id": "0yxSGTMcgK9BIlL7",
+          "name": "DeepSeek account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Prepare Candidates').first().json;\nlet raw = $json.text ?? $json.output ?? $json.response ?? $json;\nlet result = null;\nif (raw && typeof raw === 'object' && (raw.title || raw.content)) result = raw;\nif (!result) {\n  const text = String(raw || '').trim().replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/, '');\n  try { result = JSON.parse(text); } catch { result = { title: `${new Date().toISOString().slice(0, 10)} 主题简讯`, content: text, items: [] }; }\n}\nconst title = String(result.title || `${new Date().toISOString().slice(0, 10)} 主题简讯`).slice(0, 240);\nconst content = String(result.content || result.markdown || '本期没有发现符合条件的新内容。');\nconst items = Array.isArray(result.items) ? result.items.slice(0, 20) : [];\nreturn [{ json: { title, content, items, meta: { run_id: cfg.run_id, subscription_id: cfg.subscription_id, topics: cfg.topics, sources: cfg.sources, collected: cfg.collected_count, selected: items.length, generated_at: new Date().toISOString() } } }];"
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470122",
+      "name": "Build GrowBase Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [740, 80]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "8d68c808-c233-4cad-9cb7-01b28d470123",
+      "name": "Return to GrowBase",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [980, 80]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "GrowBase Webhook": { "main": [[{ "node": "Normalize Request", "type": "main", "index": 0 }]] },
+    "Normalize Request": {
+      "main": [[
+        { "node": "Split Twitter Accounts", "type": "main", "index": 0 },
+        { "node": "Fetch Reddit", "type": "main", "index": 0 },
+        { "node": "Fetch YouTube", "type": "main", "index": 0 },
+        { "node": "Fetch GitHub", "type": "main", "index": 0 },
+        { "node": "RSS The Verge", "type": "main", "index": 0 },
+        { "node": "RSS TechCrunch", "type": "main", "index": 0 },
+        { "node": "RSS NYTimes", "type": "main", "index": 0 },
+        { "node": "Search Web News", "type": "main", "index": 0 }
+      ]]
+    },
+    "Split Twitter Accounts": { "main": [[{ "node": "Fetch Twitter", "type": "main", "index": 0 }]] },
+    "Fetch Twitter": { "main": [[{ "node": "Normalize Twitter", "type": "main", "index": 0 }]] },
+    "Normalize Twitter": { "main": [[{ "node": "Merge Sources", "type": "main", "index": 0 }]] },
+    "Fetch Reddit": { "main": [[{ "node": "Normalize Reddit", "type": "main", "index": 0 }]] },
+    "Normalize Reddit": { "main": [[{ "node": "Merge Sources", "type": "main", "index": 1 }]] },
+    "Fetch YouTube": { "main": [[{ "node": "Normalize YouTube", "type": "main", "index": 0 }]] },
+    "Normalize YouTube": { "main": [[{ "node": "Merge Sources", "type": "main", "index": 2 }]] },
+    "Fetch GitHub": { "main": [[{ "node": "Normalize GitHub", "type": "main", "index": 0 }]] },
+    "Normalize GitHub": { "main": [[{ "node": "Merge Sources", "type": "main", "index": 3 }]] },
+    "RSS The Verge": { "main": [[{ "node": "Normalize The Verge", "type": "main", "index": 0 }]] },
+    "Normalize The Verge": { "main": [[{ "node": "Merge Sources", "type": "main", "index": 4 }]] },
+    "RSS TechCrunch": { "main": [[{ "node": "Normalize TechCrunch", "type": "main", "index": 0 }]] },
+    "Normalize TechCrunch": { "main": [[{ "node": "Merge Sources", "type": "main", "index": 5 }]] },
+    "RSS NYTimes": { "main": [[{ "node": "Normalize NYTimes", "type": "main", "index": 0 }]] },
+    "Normalize NYTimes": { "main": [[{ "node": "Merge Sources", "type": "main", "index": 6 }]] },
+    "Search Web News": { "main": [[{ "node": "Normalize Web News", "type": "main", "index": 0 }]] },
+    "Normalize Web News": { "main": [[{ "node": "Merge Sources", "type": "main", "index": 7 }]] },
+    "Merge Sources": { "main": [[{ "node": "Prepare Candidates", "type": "main", "index": 0 }]] },
+    "Prepare Candidates": { "main": [[{ "node": "Generate Digest", "type": "main", "index": 0 }]] },
+    "DeepSeek Chat Model": { "ai_languageModel": [[{ "node": "Generate Digest", "type": "ai_languageModel", "index": 0 }]] },
+    "Generate Digest": { "main": [[{ "node": "Build GrowBase Response", "type": "main", "index": 0 }]] },
+    "Build GrowBase Response": { "main": [[{ "node": "Return to GrowBase", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "8d68c808-c233-4cad-9cb7-01b28d470199",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
