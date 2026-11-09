@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
-  Checkbox, Form, Input, Modal, Popconfirm, message,
+  Checkbox, Form, Input, Modal, Popconfirm, Select, Switch, message,
 } from 'antd'
 import { orgApi } from '../api/organizations'
-import type { CategoryOut, ClassificationConfig, ClassificationTemplate, OrganizationOut } from '../api/organizations'
+import type { CategoryOut, ClassificationConfig, ClassificationTemplate, MemberOut, OrganizationOut } from '../api/organizations'
 import { knowledgeApi } from '../api/knowledge'
 import type { ChatMessage, KnowledgeItem } from '../api/knowledge'
 import { useAuthStore } from '../store/auth'
@@ -45,6 +45,9 @@ const I = {
   file: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h8',
   upload: 'M12 16V4M7 9l5-5 5 5M5 20h14',
   download: 'M12 3v12M7 10l5 5 5-5M5 21h14',
+  users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
+  logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9',
+  copy: 'M8 8h11v13H8zM5 16H3V3h11v2',
 }
 
 type AppearanceSettings = {
@@ -289,12 +292,14 @@ function SidebarVault({
           {renderCats(categories)}
           <div className="vault-footer">
             <span className="muted" style={{ fontSize: 11 }}>分类体系</span>
-            <button
-              className="ws-link-btn"
-              onClick={(e) => { e.stopPropagation(); onEditTemplate(org) }}
-            >
-              <Icon d={I.edit} size={11} />{config?.template_key ? '修改' : '选择'}
-            </button>
+            {org.current_user_role !== 'member' && (
+              <button
+                className="ws-link-btn"
+                onClick={(e) => { e.stopPropagation(); onEditTemplate(org) }}
+              >
+                <Icon d={I.edit} size={11} />{config?.template_key ? '修改' : '选择'}
+              </button>
+            )}
           </div>
           {config?.template_name && (
             <div style={{ padding: '0 12px 8px', fontSize: 12, color: 'var(--accent-2)', fontWeight: 500 }}>
@@ -373,7 +378,7 @@ interface OrgState {
 export default function WorkspacePage() {
   const { orgId: paramOrgId } = useParams<{ orgId?: string }>()
   const navigate = useNavigate()
-  const { user } = useAuthStore()
+  const { user, logout } = useAuthStore()
 
   const [orgs, setOrgs] = useState<OrganizationOut[]>([])
   const [orgStates, setOrgStates] = useState<Record<number, OrgState>>({})
@@ -392,6 +397,11 @@ export default function WorkspacePage() {
   const [templateSaving, setTemplateSaving] = useState(false)
   const [newOrgOpen, setNewOrgOpen] = useState(false)
   const [newOrgLoading, setNewOrgLoading] = useState(false)
+  const [joinOpen, setJoinOpen] = useState(false)
+  const [joinLoading, setJoinLoading] = useState(false)
+  const [teamOpen, setTeamOpen] = useState(false)
+  const [teamLoading, setTeamLoading] = useState(false)
+  const [members, setMembers] = useState<MemberOut[]>([])
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatInput, setChatInput] = useState('')
@@ -406,6 +416,7 @@ export default function WorkspacePage() {
 
   const [form] = Form.useForm()
   const [newOrgForm] = Form.useForm()
+  const [joinForm] = Form.useForm()
   const backgroundInputRef = useRef<HTMLInputElement | null>(null)
   const coverInputRef = useRef<HTMLInputElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -619,6 +630,95 @@ export default function WorkspacePage() {
     }
   }
 
+  const handleJoinOrg = async (values: { invite_code: string }) => {
+    setJoinLoading(true)
+    try {
+      const { data: org } = await orgApi.join(values.invite_code)
+      setOrgs((prev) => [...prev, org])
+      setJoinOpen(false)
+      joinForm.resetFields()
+      setActiveOrgId(org.id)
+      setActiveCatId(null)
+      await loadOrgState(org.id, [...orgs, org])
+      message.success(`已加入「${org.name}」`)
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '加入知识库失败')
+    } finally {
+      setJoinLoading(false)
+    }
+  }
+
+  const openTeamManagement = async () => {
+    if (!activeOrgId) return
+    setTeamOpen(true)
+    setTeamLoading(true)
+    try {
+      const { data } = await orgApi.listMembers(activeOrgId)
+      setMembers(data)
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '成员列表加载失败')
+    } finally {
+      setTeamLoading(false)
+    }
+  }
+
+  const handleMemberUpdate = async (member: MemberOut, patch: Parameters<typeof orgApi.updateMember>[2]) => {
+    if (!activeOrgId) return
+    try {
+      const { data } = await orgApi.updateMember(activeOrgId, member.user_id, patch)
+      setMembers((prev) => prev.map((item) => item.user_id === data.user_id ? data : item))
+      message.success('成员权限已更新')
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '权限更新失败')
+    }
+  }
+
+  const handleRemoveMember = async (member: MemberOut) => {
+    if (!activeOrgId) return
+    try {
+      await orgApi.removeMember(activeOrgId, member.user_id)
+      setMembers((prev) => prev.filter((item) => item.user_id !== member.user_id))
+      setOrgs((prev) => prev.map((org) => org.id === activeOrgId ? { ...org, member_count: Math.max(1, org.member_count - 1) } : org))
+      message.success('成员已移除')
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '移除成员失败')
+    }
+  }
+
+  const updateActiveOrg = (updated: OrganizationOut) => {
+    setOrgs((prev) => prev.map((org) => org.id === updated.id ? updated : org))
+    setOrgStates((prev) => prev[updated.id]
+      ? { ...prev, [updated.id]: { ...prev[updated.id], org: updated } }
+      : prev)
+  }
+
+  const handleRegenerateInviteCode = async () => {
+    if (!activeOrgId) return
+    try {
+      const { data } = await orgApi.regenerateInviteCode(activeOrgId)
+      updateActiveOrg(data)
+      message.success('已生成新的邀请码，旧邀请码立即失效')
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '邀请码更新失败')
+    }
+  }
+
+  const handleInviteEnabled = async (enabled: boolean) => {
+    if (!activeOrgId) return
+    try {
+      const { data } = await orgApi.setInviteEnabled(activeOrgId, enabled)
+      updateActiveOrg(data)
+      message.success(enabled ? '邀请码已启用' : '邀请码已停用')
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '邀请码状态更新失败')
+    }
+  }
+
+  const handleLogout = () => {
+    logout()
+    navigate('/login')
+  }
+
   const handleChat = async () => {
     const text = chatInput.trim()
     if (!text || chatLoading || !activeOrgId) return
@@ -708,12 +808,15 @@ export default function WorkspacePage() {
           <button className={`ws-rail-btn${activeView === 'knowledge' ? ' active' : ''}`} title="知识库" onClick={() => setActiveView('knowledge')}>
             <Icon d={I.book} />
           </button>
-          <button className={`ws-rail-btn${activeView === 'assistant' ? ' active' : ''}`} title="AI 助手" onClick={() => setActiveView('assistant')}>
+          <button className={`ws-rail-btn${activeView === 'assistant' ? ' active' : ''}`} title={activeOrg?.can_use_ai === false ? '管理员已限制 AI 权限' : 'AI 助手'} disabled={activeOrg?.can_use_ai === false} onClick={() => setActiveView('assistant')}>
             <Icon d={I.chat} />
           </button>
           <div className="ws-rail-spacer" />
           <button className="ws-rail-btn" title="AI 设置" onClick={() => navigate('/settings')}>
             <Icon d={I.settings} />
+          </button>
+          <button className="ws-rail-btn" title={`退出登录（${user?.username ?? ''}）`} onClick={handleLogout}>
+            <Icon d={I.logout} />
           </button>
         </nav>
 
@@ -721,9 +824,10 @@ export default function WorkspacePage() {
         <aside className="ws-sidebar">
           <div className="ws-sidebar-header">
             <span className="ws-sidebar-title">知识空间</span>
-            <button className="ws-icon-btn" title="新建知识库" onClick={() => setNewOrgOpen(true)}>
-              <Icon d={I.plus} size={12} strokeWidth={2.5} />
-            </button>
+            <span className="sidebar-head-actions">
+              <button className="ws-icon-btn" title="输入邀请码加入" onClick={() => setJoinOpen(true)}><Icon d={I.users} size={12} /></button>
+              <button className="ws-icon-btn" title="新建知识库" onClick={() => setNewOrgOpen(true)}><Icon d={I.plus} size={12} strokeWidth={2.5} /></button>
+            </span>
           </div>
           <div className="ws-tree">
             {orgs.map((org, i) => {
@@ -768,6 +872,11 @@ export default function WorkspacePage() {
               <span className="bc-current">{activeView === 'assistant' ? 'AI 助手' : breadcrumb}</span>
             </div>
             <div className="ws-topbar-right">
+              {activeOrg && (
+                <button className="ws-btn" onClick={openTeamManagement}>
+                  <Icon d={I.users} size={13} />团队 {activeOrg.member_count}
+                </button>
+              )}
               <button className="ws-btn ws-personalize-btn" onClick={() => setAppearanceOpen(true)}>
                 <Icon d={I.palette} size={13} />个性化
               </button>
@@ -777,10 +886,12 @@ export default function WorkspacePage() {
                     <Icon d={I.search} size={13} />
                     <input placeholder="搜索知识…" value={search} onChange={(e) => setSearch(e.target.value)} />
                   </div>
-                  <button className="ws-btn" onClick={handleReprocess}><Icon d={I.refresh} size={13} /></button>
-                  <button className="ws-btn ws-btn-primary" onClick={() => setAddOpen(true)}>
-                    <Icon d={I.plus} size={13} strokeWidth={2.5} />添加知识
-                  </button>
+                  {activeOrg?.current_user_role !== 'member' && <button className="ws-btn" onClick={handleReprocess}><Icon d={I.refresh} size={13} /></button>}
+                  {activeOrg?.can_add_knowledge && (
+                    <button className="ws-btn ws-btn-primary" onClick={() => setAddOpen(true)}>
+                      <Icon d={I.plus} size={13} strokeWidth={2.5} />添加知识
+                    </button>
+                  )}
                 </>
               )}
             </div>
@@ -847,6 +958,7 @@ export default function WorkspacePage() {
                         </div>
                       )}
                       <span className="shelf-count">{orgs.length} 本知识库</span>
+                      <button className="ws-btn" onClick={() => setJoinOpen(true)}><Icon d={I.users} size={13} />加入知识库</button>
                       <button className="ws-btn" onClick={() => setNewOrgOpen(true)}><Icon d={I.plus} size={13} />新建书</button>
                     </div>
                   </div>
@@ -892,7 +1004,7 @@ export default function WorkspacePage() {
                     {appearance.theme === 'piggy' && <div className="hero-piggy"><PiggyMascot /></div>}
                   </div>
                 </section>
-                {!config?.template_key && activeOrgId && (
+                {!config?.template_key && activeOrgId && activeOrg?.current_user_role !== 'member' && (
                   <div className="ws-banner">
                     <span>还没有选择分类体系。选择一套模板后，AI 才能按你的规则整理知识。</span>
                     <button className="ws-btn ws-btn-primary" style={{ flexShrink: 0 }} onClick={() => setTemplateOrgId(activeOrgId)}>
@@ -970,9 +1082,11 @@ export default function WorkspacePage() {
                                   <Icon d={I.download} size={13} />下载文件
                                 </button>
                               )}
-                              <Popconfirm title="确定移除这条知识？" onConfirm={() => handleRemove(item.id)}>
-                                <button className="ws-icon-btn danger"><Icon d={I.trash} size={13} /></button>
-                              </Popconfirm>
+                              {(activeOrg?.current_user_role !== 'member' || (activeOrg.can_delete_own && item.created_by === user?.id)) && (
+                                <Popconfirm title="确定移除这条知识？" onConfirm={() => handleRemove(item.id)}>
+                                  <button className="ws-icon-btn danger"><Icon d={I.trash} size={13} /></button>
+                                </Popconfirm>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1049,6 +1163,81 @@ export default function WorkspacePage() {
             {newOrgLoading ? '创建中…' : '创建知识库'}
           </button>
         </Form>
+      </Modal>
+
+      <Modal rootClassName={appearance.theme === 'piggy' ? 'piggy-modal' : ''} title="加入团队知识库" open={joinOpen} onCancel={() => { setJoinOpen(false); joinForm.resetFields() }} footer={null} width={460}>
+        <Form form={joinForm} layout="vertical" onFinish={handleJoinOrg} style={{ marginTop: 16 }}>
+          <Form.Item name="invite_code" label="知识库邀请码" rules={[{ required: true, message: '请输入邀请码' }]}>
+            <Input className="invite-code-input" placeholder="例如：7GROW9KB" maxLength={20} onChange={(event) => joinForm.setFieldValue('invite_code', event.target.value.toUpperCase())} />
+          </Form.Item>
+          <p className="form-help">向知识库创建者或管理员获取邀请码，加入后即可看到团队共享内容。</p>
+          <button type="submit" className={`ws-btn ws-btn-primary${joinLoading ? ' loading' : ''}`} style={{ width: '100%', justifyContent: 'center' }} disabled={joinLoading}>
+            <Icon d={I.users} size={14} />{joinLoading ? '加入中…' : '加入知识库'}
+          </button>
+        </Form>
+      </Modal>
+
+      <Modal rootClassName={appearance.theme === 'piggy' ? 'piggy-modal' : ''} title="团队与权限" open={teamOpen} onCancel={() => setTeamOpen(false)} footer={null} width={760}>
+        {activeOrg && (
+          <div className="team-panel">
+            {activeOrg.current_user_role !== 'member' && (
+              <section className="invite-code-panel">
+                <div>
+                  <span className="team-label">团队邀请码</span>
+                  <strong className={activeOrg.invite_enabled ? '' : 'disabled'}>{activeOrg.invite_code ?? '—'}</strong>
+                  <small>{activeOrg.invite_enabled ? '成员注册后输入此码即可加入' : '邀请码当前已停用'}</small>
+                </div>
+                <div className="invite-actions">
+                  <Switch size="small" checked={activeOrg.invite_enabled} onChange={handleInviteEnabled} />
+                  <button className="ws-icon-btn" title="复制邀请码" disabled={!activeOrg.invite_enabled || !activeOrg.invite_code} onClick={() => {
+                    if (activeOrg.invite_code) navigator.clipboard.writeText(activeOrg.invite_code).then(() => message.success('邀请码已复制'))
+                  }}><Icon d={I.copy} size={13} /></button>
+                  <Popconfirm title="生成后旧邀请码会立即失效，确定继续？" onConfirm={handleRegenerateInviteCode}>
+                    <button className="ws-btn">换一个邀请码</button>
+                  </Popconfirm>
+                </div>
+              </section>
+            )}
+
+            <div className="team-section-head">
+              <div><strong>成员权限</strong><span>{activeOrg.member_count} 名成员</span></div>
+              <span className="role-note">创建者拥有全部权限；管理员可管理普通成员</span>
+            </div>
+            <div className="member-list">
+              {teamLoading ? <div className="ws-loading">加载成员中…</div> : members.map((member) => {
+                const actorIsOwner = activeOrg.current_user_role === 'owner'
+                const actorIsAdmin = activeOrg.current_user_role === 'admin'
+                const editable = member.role === 'member' && (actorIsOwner || actorIsAdmin)
+                const removable = member.role !== 'owner' && member.user_id !== user?.id && (actorIsOwner || (actorIsAdmin && member.role === 'member'))
+                return (
+                  <div className="member-row" key={member.user_id}>
+                    <div className="member-identity">
+                      <span className="member-avatar">{member.username.slice(0, 1).toUpperCase()}</span>
+                      <span><strong>{member.username}{member.user_id === user?.id ? '（我）' : ''}</strong><small>{member.email}</small></span>
+                    </div>
+                    <div className="member-role">
+                      {actorIsOwner && member.role !== 'owner' ? (
+                        <Select size="small" value={member.role} style={{ width: 92 }} options={[{ value: 'member', label: '成员' }, { value: 'admin', label: '管理员' }]} onChange={(role) => handleMemberUpdate(member, { role })} />
+                      ) : <span className={`role-badge ${member.role}`}>{member.role === 'owner' ? '创建者' : member.role === 'admin' ? '管理员' : '成员'}</span>}
+                    </div>
+                    <div className="member-permissions">
+                      {member.role === 'member' ? (
+                        <>
+                          <label title="允许添加链接、笔记和文件"><Switch size="small" checked={member.can_add_knowledge} disabled={!editable} onChange={(value) => handleMemberUpdate(member, { can_add_knowledge: value })} />添加</label>
+                          <label title="允许删除自己提交的知识"><Switch size="small" checked={member.can_delete_own} disabled={!editable} onChange={(value) => handleMemberUpdate(member, { can_delete_own: value })} />删除自己的</label>
+                          <label title="允许使用 AI 助手"><Switch size="small" checked={member.can_use_ai} disabled={!editable} onChange={(value) => handleMemberUpdate(member, { can_use_ai: value })} />使用 AI</label>
+                        </>
+                      ) : <span className="full-access">全部权限</span>}
+                    </div>
+                    <div className="member-remove">
+                      {removable && <Popconfirm title={`确定移除 ${member.username}？`} onConfirm={() => handleRemoveMember(member)}><button className="ws-icon-btn danger"><Icon d={I.trash} size={13} /></button></Popconfirm>}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* TEMPLATE PICKER MODAL */}

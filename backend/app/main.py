@@ -28,12 +28,14 @@ app.add_middleware(
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_add_missing_knowledge_columns)
+        await conn.run_sync(_run_compatibility_migrations)
     await _rescue_stuck_items()
 
 
-def _add_missing_knowledge_columns(sync_conn):
-    """Small compatibility migration for local databases created before uploads."""
+def _run_compatibility_migrations(sync_conn):
+    """Small compatibility migrations for local databases without Alembic history."""
+    import secrets
+    import string
     from sqlalchemy import inspect
 
     inspector = inspect(sync_conn)
@@ -50,6 +52,41 @@ def _add_missing_knowledge_columns(sync_conn):
             sync_conn.exec_driver_sql(
                 f"ALTER TABLE knowledge_items ADD COLUMN {name} {sql_type}"
             )
+
+    org_columns = {column["name"] for column in inspector.get_columns("organizations")}
+    if "invite_code" not in org_columns:
+        sync_conn.exec_driver_sql("ALTER TABLE organizations ADD COLUMN invite_code VARCHAR(12)")
+    if "invite_enabled" not in org_columns:
+        sync_conn.exec_driver_sql("ALTER TABLE organizations ADD COLUMN invite_enabled BOOLEAN NOT NULL DEFAULT 1")
+
+    alphabet = string.ascii_uppercase + string.digits
+    rows = sync_conn.exec_driver_sql("SELECT id, invite_code FROM organizations").fetchall()
+    used = {row[1] for row in rows if row[1]}
+    for org_id, invite_code in rows:
+        if invite_code:
+            continue
+        while True:
+            code = "".join(secrets.choice(alphabet) for _ in range(8))
+            if code not in used:
+                used.add(code)
+                break
+        sync_conn.exec_driver_sql(
+            "UPDATE organizations SET invite_code = ? WHERE id = ?",
+            (code, org_id),
+        )
+    sync_conn.exec_driver_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_organizations_invite_code ON organizations (invite_code)"
+    )
+
+    member_columns = {column["name"] for column in inspector.get_columns("organization_members")}
+    for name in ("can_add_knowledge", "can_delete_own", "can_use_ai"):
+        if name not in member_columns:
+            sync_conn.exec_driver_sql(
+                f"ALTER TABLE organization_members ADD COLUMN {name} BOOLEAN NOT NULL DEFAULT 1"
+            )
+    sync_conn.exec_driver_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_org_member_idx ON organization_members (organization_id, user_id)"
+    )
 
 async def _rescue_stuck_items():
     """On startup, re-queue any items stuck in 'processing' from a previous run."""

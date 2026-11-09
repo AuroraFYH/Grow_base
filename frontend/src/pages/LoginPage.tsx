@@ -1,11 +1,9 @@
 import { useState } from 'react'
-import { Form, Input, Button, Card, Tabs, message, Typography } from 'antd'
+import { Form, Input, Button, Tabs, message } from 'antd'
 import { UserOutlined, LockOutlined, MailOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { authApi } from '../api/auth'
 import { useAuthStore } from '../store/auth'
-
-const { Title } = Typography
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false)
@@ -30,7 +28,10 @@ export default function LoginPage() {
     setLoading(true)
     try {
       await authApi.register(values)
-      message.success('注册成功，请登录')
+      const { data } = await authApi.login({ email: values.email, password: values.password })
+      setAuth(data.user, data.access_token)
+      message.success('注册成功')
+      navigate('/')
     } catch (err: any) {
       message.error(err.response?.data?.detail || '注册失败')
     } finally {
@@ -39,9 +40,12 @@ export default function LoginPage() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f2f5' }}>
-      <Card style={{ width: 400, boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
-        <Title level={3} style={{ textAlign: 'center', marginBottom: 24 }}>GrowBase</Title>
+    <div className="login-shell">
+      <div className="login-grid" aria-hidden="true" />
+      <main className="login-panel">
+        <div className="login-brand"><span>G</span><i>+</i></div>
+        <h1>GrowBase</h1>
+        <p>团队知识空间</p>
         <Tabs
           defaultActiveKey="login"
           centered
@@ -74,8 +78,8 @@ export default function LoginPage() {
                   <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }]}>
                     <Input prefix={<UserOutlined />} placeholder="用户名" size="large" />
                   </Form.Item>
-                  <Form.Item name="password" rules={[{ required: true, min: 6, message: '密码至少6位' }]}>
-                    <Input.Password prefix={<LockOutlined />} placeholder="密码（至少6位）" size="large" />
+                  <Form.Item name="password" rules={[{ required: true, min: 8, message: '密码至少8位' }]}>
+                    <Input.Password prefix={<LockOutlined />} placeholder="密码（至少8位）" size="large" />
                   </Form.Item>
                   <Button type="primary" htmlType="submit" block size="large" loading={loading}>
                     注册
@@ -85,7 +89,7 @@ export default function LoginPage() {
             },
           ]}
         />
-      </Card>
+      </main>
     </div>
   )
 }

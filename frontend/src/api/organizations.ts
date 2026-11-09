@@ -7,6 +7,12 @@ export interface OrganizationOut {
   owner_id: number
   created_at: string
   member_count: number
+  current_user_role: 'owner' | 'admin' | 'member'
+  invite_code: string | null
+  invite_enabled: boolean
+  can_add_knowledge: boolean
+  can_delete_own: boolean
+  can_use_ai: boolean
 }
 
 export interface MemberOut {
@@ -15,6 +21,9 @@ export interface MemberOut {
   username: string
   email: string
   role: 'owner' | 'admin' | 'member'
+  can_add_knowledge: boolean
+  can_delete_own: boolean
+  can_use_ai: boolean
   joined_at: string
 }
 
@@ -58,6 +67,9 @@ export const orgApi = {
 
   list: () => api.get<OrganizationOut[]>('/api/organizations'),
 
+  join: (inviteCode: string) =>
+    api.post<OrganizationOut>('/api/organizations/join', { invite_code: inviteCode }),
+
   get: (id: number) => api.get<OrganizationOut>(`/api/organizations/${id}`),
 
   update: (id: number, data: { name?: string; description?: string }) =>
@@ -71,6 +83,19 @@ export const orgApi = {
 
   removeMember: (orgId: number, userId: number) =>
     api.delete(`/api/organizations/${orgId}/members/${userId}`),
+
+  updateMember: (orgId: number, userId: number, data: {
+    role?: 'admin' | 'member'
+    can_add_knowledge?: boolean
+    can_delete_own?: boolean
+    can_use_ai?: boolean
+  }) => api.patch<MemberOut>(`/api/organizations/${orgId}/members/${userId}`, data),
+
+  regenerateInviteCode: (orgId: number) =>
+    api.post<OrganizationOut>(`/api/organizations/${orgId}/invite-code/regenerate`),
+
+  setInviteEnabled: (orgId: number, enabled: boolean) =>
+    api.patch<OrganizationOut>(`/api/organizations/${orgId}/invite-code`, { enabled }),
 
   getCategories: (id: number) =>
     api.get<CategoryOut[]>(`/api/organizations/${id}/categories`),

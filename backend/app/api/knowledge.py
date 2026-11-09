@@ -35,17 +35,24 @@ from app.services.knowledge_ai import (
 router = APIRouter(tags=["知识库"])
 
 
-async def require_member(org_id: int, user: User, db: AsyncSession) -> MemberRole:
+async def require_member(org_id: int, user: User, db: AsyncSession) -> OrganizationMember:
     result = await db.execute(
-        select(OrganizationMember.role).where(
+        select(OrganizationMember).where(
             OrganizationMember.organization_id == org_id,
             OrganizationMember.user_id == user.id,
         )
     )
-    role = result.scalar_one_or_none()
-    if not role:
+    member = result.scalar_one_or_none()
+    if not member:
         raise HTTPException(status_code=403, detail="无权访问此知识库")
-    return role
+    return member
+
+
+def require_member_permission(member: OrganizationMember, permission: str, detail: str) -> None:
+    if member.role in (MemberRole.owner, MemberRole.admin):
+        return
+    if not getattr(member, permission):
+        raise HTTPException(status_code=403, detail=detail)
 
 
 async def categories_for_org(org_id: int, db: AsyncSession) -> list[Category]:
@@ -310,7 +317,8 @@ async def create_knowledge(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> KnowledgeOut:
-    await require_member(org_id, current_user, db)
+    membership = await require_member(org_id, current_user, db)
+    require_member_permission(membership, "can_add_knowledge", "管理员已限制你添加知识")
     source_url = data.source_url.strip() if data.source_url else None
     content = data.content.strip() if data.content else None
     instructions = data.instructions.strip() if data.instructions else None
@@ -384,7 +392,8 @@ async def upload_knowledge_file(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> KnowledgeOut:
-    await require_member(org_id, current_user, db)
+    membership = await require_member(org_id, current_user, db)
+    require_member_permission(membership, "can_add_knowledge", "管理员已限制你上传文件")
     from app.services.file_storage import save_upload
 
     try:
@@ -464,7 +473,9 @@ async def reprocess_knowledge(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[KnowledgeOut]:
-    await require_member(org_id, current_user, db)
+    membership = await require_member(org_id, current_user, db)
+    if membership.role not in (MemberRole.owner, MemberRole.admin):
+        raise HTTPException(status_code=403, detail="只有管理员可以重新整理整个知识库")
     result = await db.execute(
         select(KnowledgeItem)
         .where(KnowledgeItem.organization_id == org_id)
@@ -496,7 +507,7 @@ async def delete_knowledge(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
-    role = await require_member(org_id, current_user, db)
+    membership = await require_member(org_id, current_user, db)
     result = await db.execute(
         select(KnowledgeItem).where(
             KnowledgeItem.id == knowledge_id,
@@ -506,8 +517,10 @@ async def delete_knowledge(
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=404, detail="知识不存在")
-    if role == MemberRole.member and item.created_by != current_user.id:
+    if membership.role == MemberRole.member and item.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能删除自己添加的知识")
+    if membership.role == MemberRole.member and not membership.can_delete_own:
+        raise HTTPException(status_code=403, detail="管理员已限制你删除知识")
     file_path = item.file_path
     await db.delete(item)
     await db.commit()
@@ -541,7 +554,8 @@ async def chat(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ChatResponse:
-    await require_member(org_id, current_user, db)
+    membership = await require_member(org_id, current_user, db)
+    require_member_permission(membership, "can_use_ai", "管理员已限制你使用 AI 助手")
     user_message = ChatMessage(
         organization_id=org_id,
         user_id=current_user.id,
@@ -558,6 +572,8 @@ async def chat(
     # ── vault link rewrite ──
     vault_link_keywords = ["重新生成链接", "重新链接", "更新链接", "更新 vault", "写入 vault", "生成 wikilink"]
     if any(kw in data.message for kw in vault_link_keywords):
+        if membership.role not in (MemberRole.owner, MemberRole.admin):
+            raise HTTPException(status_code=403, detail="只有管理员可以重建知识库链接")
         from sqlalchemy import select as sa_select
         from app.models.user import UserLLMConfig
         from app.models.organization import Organization
@@ -626,6 +642,8 @@ async def chat(
 
     # ── reprocess ──
     elif any(word in data.message for word in ["重新分类", "重新整理", "整理全部", "整理知识"]):
+        if membership.role not in (MemberRole.owner, MemberRole.admin):
+            raise HTTPException(status_code=403, detail="只有管理员可以整理整个知识库")
         result = await db.execute(
             select(KnowledgeItem)
             .where(KnowledgeItem.organization_id == org_id)

@@ -14,6 +14,63 @@ body {
 
 #root { min-height: 100vh; }
 
+.login-shell {
+  min-height: 100vh;
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 24px;
+  box-sizing: border-box;
+  background: linear-gradient(145deg, #060b13 0%, #0d1724 55%, #07141a 100%);
+}
+.login-grid {
+  position: absolute;
+  inset: 0;
+  opacity: .18;
+  background-image:
+    linear-gradient(rgba(105, 226, 239, .12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(105, 226, 239, .12) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: linear-gradient(to bottom, transparent, #000 28%, #000 72%, transparent);
+}
+.login-panel {
+  position: relative;
+  width: min(390px, 100%);
+  padding: 34px 38px 38px;
+  border: 1px solid rgba(110, 231, 249, .2);
+  border-radius: 8px;
+  background: rgba(9, 17, 29, .9);
+  box-shadow: 0 26px 80px rgba(0, 0, 0, .42), inset 0 1px 0 rgba(255, 255, 255, .03);
+  box-sizing: border-box;
+  backdrop-filter: blur(14px);
+}
+.login-brand {
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  margin: 0 auto 14px;
+  border: 1px solid rgba(110, 231, 249, .4);
+  border-radius: 7px;
+  color: #dffeff;
+  background: rgba(28, 130, 149, .16);
+  box-shadow: 0 0 28px rgba(42, 193, 212, .12);
+  font-size: 23px;
+  font-weight: 800;
+}
+.login-brand i { color: #6ee7f9; font-size: 13px; font-style: normal; }
+.login-panel h1 { margin: 0; color: #edf7ff; text-align: center; font-size: 24px; letter-spacing: 0; }
+.login-panel > p { margin: 7px 0 22px; color: #7588a5; text-align: center; font-size: 12px; }
+.login-panel .ant-tabs-nav::before { border-color: rgba(135, 159, 201, .16); }
+.login-panel .ant-tabs-tab { color: #788aa6; }
+.login-panel .ant-tabs-tab-active .ant-tabs-tab-btn { color: #7debf1 !important; }
+.login-panel .ant-input-affix-wrapper { min-height: 42px; background: rgba(5, 11, 20, .72) !important; border-color: rgba(135, 159, 201, .2) !important; }
+.login-panel .ant-input { background: transparent !important; }
+.login-panel .ant-btn-primary { min-height: 42px; border: 0; color: #061117; background: #6ee7f9; font-weight: 700; }
+.login-panel .ant-btn-primary:hover { color: #061117 !important; background: #9cf3ff !important; }
+
 .auth-state {
   min-height: 100vh;
   display: flex;
@@ -186,3 +243,69 @@ button, input, textarea, select { font: inherit; }
 .piggy-modal .file-process-option .ant-checkbox-wrapper { color: #7e4c5c; }
 .piggy-modal .file-dropzone small,
 .piggy-modal .file-process-option small { color: #a77884; }
+
+.sidebar-head-actions { display: flex; align-items: center; gap: 4px; }
+.ws-rail-btn:disabled { opacity: .35; cursor: not-allowed; }
+.form-help { margin: -8px 0 18px; color: #7f8da6; font-size: 12px; line-height: 1.6; }
+.invite-code-input { text-transform: uppercase; letter-spacing: 3px; font-weight: 700; }
+
+.team-panel { display: flex; flex-direction: column; gap: 20px; margin-top: 8px; }
+.invite-code-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px;
+  border: 1px solid rgba(110, 231, 249, .22);
+  border-radius: 8px;
+  background: rgba(14, 42, 56, .42);
+}
+.invite-code-panel > div:first-child { display: grid; grid-template-columns: auto auto; align-items: center; gap: 4px 14px; }
+.team-label { color: #8da0be; font-size: 12px; }
+.invite-code-panel strong { color: #8af3f2; font-size: 22px; letter-spacing: 4px; }
+.invite-code-panel strong.disabled { color: #68748a; text-decoration: line-through; }
+.invite-code-panel small { grid-column: 1 / -1; color: #7888a3; }
+.invite-actions { display: flex; align-items: center; gap: 8px; }
+.team-section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.team-section-head > div { display: flex; align-items: baseline; gap: 10px; }
+.team-section-head strong { font-size: 15px; }
+.team-section-head span,
+.role-note { color: #7f8da6; font-size: 12px; }
+.member-list { border: 1px solid rgba(135, 159, 201, .15); border-radius: 8px; overflow: hidden; }
+.member-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.25fr) 100px minmax(250px, 1.6fr) 32px;
+  align-items: center;
+  gap: 12px;
+  min-height: 70px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(135, 159, 201, .12);
+}
+.member-row:last-child { border-bottom: 0; }
+.member-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.member-avatar { width: 34px; height: 34px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid rgba(110, 231, 249, .28); border-radius: 50%; color: #7debf1; background: rgba(28, 120, 141, .17); font-weight: 700; }
+.member-identity > span:last-child { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.member-identity strong,
+.member-identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-identity small { color: #74839d; }
+.role-badge { display: inline-flex; padding: 3px 8px; border-radius: 4px; color: #9ba9bd; background: rgba(126, 143, 166, .13); font-size: 12px; }
+.role-badge.owner { color: #f7c96c; background: rgba(209, 151, 37, .14); }
+.role-badge.admin { color: #79e5eb; background: rgba(45, 157, 171, .14); }
+.member-permissions { display: flex; align-items: center; gap: 13px; }
+.member-permissions label { display: flex; align-items: center; gap: 5px; color: #9aa9bf; font-size: 12px; white-space: nowrap; }
+.full-access { color: #7690ad; font-size: 12px; }
+
+.piggy-modal .invite-code-panel { background: #fff3f5; border-color: rgba(212, 108, 137, .24); }
+.piggy-modal .invite-code-panel strong { color: #bd4f70; }
+.piggy-modal .member-list { border-color: rgba(212, 108, 137, .16); }
+.piggy-modal .member-row { border-color: rgba(212, 108, 137, .13); }
+.piggy-modal .member-avatar { color: #b84f6e; background: #ffe5eb; border-color: rgba(212, 108, 137, .25); }
+
+@media (max-width: 760px) {
+  .invite-code-panel { align-items: flex-start; flex-direction: column; }
+  .invite-actions { width: 100%; flex-wrap: wrap; }
+  .member-row { grid-template-columns: 1fr auto; gap: 10px; }
+  .member-permissions { grid-column: 1 / -1; flex-wrap: wrap; }
+  .member-remove { grid-column: 2; grid-row: 1; }
+  .team-section-head { align-items: flex-start; flex-direction: column; }
+}

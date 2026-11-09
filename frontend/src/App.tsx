@@ -1,14 +1,14 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import WorkspacePage from './pages/WorkspacePage'
 import SettingsPage from './pages/SettingsPage'
+import LoginPage from './pages/LoginPage'
 import RequireAuth from './components/RequireAuth'
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Kept as a compatibility URL for old bookmarks; local mode has no login screen. */}
-        <Route path="/login" element={<Navigate to="/" replace />} />
+        <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<RequireAuth><WorkspacePage /></RequireAuth>} />
         <Route path="/workspace" element={<RequireAuth><WorkspacePage /></RequireAuth>} />
         <Route path="/workspace/:orgId" element={<RequireAuth><WorkspacePage /></RequireAuth>} />
