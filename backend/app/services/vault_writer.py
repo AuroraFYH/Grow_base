@@ -27,7 +27,7 @@ def _safe(name: str) -> str:
 
 def scan_vault_titles(vault_path: str) -> list[dict[str, str]]:
     """Return [{title, rel_path}] for every .md in vault (skip hidden dirs)."""
-    root = Path(vault_path)
+    root = Path(vault_path).expanduser()
     if not root.is_dir():
         return []
     out = []
@@ -545,7 +545,7 @@ async def write_to_vault(
     Main entry. Extracts knowledge structure from content, writes all vault files.
     Returns path of the video note file written.
     """
-    vault_root = Path(vault_path)
+    vault_root = Path(vault_path).expanduser()
     if not vault_root.is_dir():
         raise FileNotFoundError(f"vault 路径不存在：{vault_path}")
 
@@ -752,7 +752,7 @@ async def rewrite_vault_links(
     model_name: str,
 ) -> tuple[str, list[str]]:
     """Find existing node files for this item and rewrite their wikilinks section."""
-    vault_root = Path(vault_path)
+    vault_root = Path(vault_path).expanduser()
     safe_branch = _safe(category_name or org_name)
     node_folder = vault_root / "知识节点" / safe_branch
 

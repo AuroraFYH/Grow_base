@@ -54,6 +54,9 @@ export const feedsApi = {
   create: (data: DigestSubscriptionPayload) => api.post<DigestSubscription>('/api/feeds', data),
   update: (id: number, data: Partial<DigestSubscriptionPayload>) => api.patch<DigestSubscription>(`/api/feeds/${id}`, data),
   remove: (id: number) => api.delete(`/api/feeds/${id}`),
-  run: (id: number) => api.post<DigestSubscription>(`/api/feeds/${id}/run`),
+  // n8n may need time to collect and summarize multiple sources. Keep the
+  // normal API timeout short, but let an explicit run finish before reporting
+  // a client-side failure.
+  run: (id: number) => api.post<DigestSubscription>(`/api/feeds/${id}/run`, undefined, { timeout: 180000 }),
   deliveries: (id: number) => api.get<DigestDelivery[]>(`/api/feeds/${id}/deliveries`),
 }

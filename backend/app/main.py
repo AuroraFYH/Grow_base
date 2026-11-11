@@ -1,12 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import engine, Base, AsyncSessionLocal
-from app.api import auth, organizations, classification, knowledge, feeds
+from app.api import auth, organizations, classification, knowledge, feeds, wiki
 from app.api import llm_config
 import app.models.user
 import app.models.organization
 import app.models.knowledge
 import app.models.feed
+import app.models.wiki
 
 _digest_scheduler_task = None
 
@@ -129,6 +130,7 @@ app.include_router(classification.router)
 app.include_router(knowledge.router)
 app.include_router(llm_config.router)
 app.include_router(feeds.router)
+app.include_router(wiki.router)
 
 @app.get("/health")
 async def health():

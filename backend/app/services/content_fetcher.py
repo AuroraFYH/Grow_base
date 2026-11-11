@@ -55,7 +55,23 @@ async def fetch_video_transcript(
     if platform:
         _, dtk_api_key = _dtk_config()
         if dtk_api_key:
-            return await _fetch_video_via_dtk(url, platform)
+            try:
+                return await _fetch_video_via_dtk(url, platform)
+            except Exception as dtk_error:
+                # A definitive DTK result (missing/deleted content or an
+                # unavailable platform identity) should not be hidden by a
+                # second, usually less informative yt-dlp error.
+                if any(marker in str(dtk_error) for marker in ("找不到这个", "需要可用的")):
+                    raise
+                # DTK deployments can expose different endpoint generations or
+                # lack an identity for a platform. Keep the local yt-dlp +
+                # Whisper path available instead of stopping at a DTK 404.
+                try:
+                    return await _fetch_video_ytdlp(url, cookies_file=cookies_file)
+                except Exception as fallback_error:
+                    raise ValueError(
+                        f"DTK 提取失败：{dtk_error}；备用 yt-dlp/Whisper 也失败：{fallback_error}"
+                    ) from fallback_error
     if is_video_url(url):
         return await _fetch_video_ytdlp(url, cookies_file=cookies_file)
     raise ValueError("该链接不是当前支持的视频平台")
@@ -162,67 +178,104 @@ async def _fetch_github(url: str) -> tuple[str, str]:
 
 
 async def _fetch_video_via_dtk(url: str, platform: str) -> tuple[str, str]:
-    """Download + transcribe via local DTK instance."""
+    """Download + transcribe via the DTK v5 unified API."""
     dtk_base_url, dtk_api_key = _dtk_config()
     headers = {"X-API-Key": dtk_api_key}
 
-    async with httpx.AsyncClient(base_url=dtk_base_url, headers=headers, timeout=30) as client:
-        # 1. Get video metadata (title)
-        meta_resp = await client.get(f"/api/v1/{platform}/video", params={"url": url, "wait": 10})
-        meta_resp.raise_for_status()
-        meta = meta_resp.json()
-        if not meta.get("success"):
-            raise ValueError(f"DTK 无法获取视频信息：{meta.get('error', {}).get('message', '未知错误')}")
-        title = meta["data"].get("title") or url
+    def unwrap(body: dict, action: str) -> dict:
+        if body.get("success"):
+            return body.get("data") or {}
+        error = body.get("error") or {}
+        code = error.get("code") or "UNKNOWN"
+        detail = error.get("details") or {}
+        message = error.get("message") or "未知错误"
+        if code == "NOT_FOUND":
+            content_id = detail.get("content_id") or url
+            raise ValueError(f"DTK 找不到这个 {platform} 视频（作品 ID：{content_id}），请检查链接是否完整或视频是否已删除/设为不可见")
+        if code in {"IDENTITY_POOL_EXHAUSTED", "UPSTREAM_RISK_CONTROL", "LOGIN_REQUIRED"}:
+            raise ValueError(f"DTK {action}需要可用的 {platform} 登录身份或 cookies：{message}")
+        raise ValueError(f"DTK {action}失败 [{code}]：{message}")
 
-        # 2. Start download
-        dl_resp = await client.post("/api/v1/downloads", json={"url": url, "skip_existing": True})
-        dl_resp.raise_for_status()
-        dl = dl_resp.json()
-        if not dl.get("success"):
-            raise ValueError(f"DTK 下载失败：{dl.get('error', {}).get('message', '未知错误')}")
-        download_id = dl["data"]["download_id"]
-
-    # 3. Wait for download to finish (poll, up to 60s)
     import asyncio
-    async with httpx.AsyncClient(base_url=dtk_base_url, headers=headers, timeout=15) as client:
-        download_done = False
-        for _ in range(20):
-            await asyncio.sleep(3)
-            r = await client.get(f"/api/v1/downloads/{download_id}")
-            r.raise_for_status()
-            state = r.json().get("data", {}).get("state", "")
-            if state == "done":
-                download_done = True
-                break
-            if state in ("failed", "cancelled"):
-                raise ValueError(f"DTK 下载失败，状态：{state}")
-        if not download_done:
-            raise ValueError("DTK 下载超时（超过 60 秒）")
+    async with httpx.AsyncClient(base_url=dtk_base_url, headers=headers, timeout=30) as client:
+        download_response = await client.post(
+            "/api/v1/downloads",
+            json={"url": url, "skip_existing": True},
+        )
+        download_response.raise_for_status()
+        download = unwrap(download_response.json(), "下载")
+        download_id = download.get("download_id")
+        task_id = download.get("task_id")
+        if not download_id:
+            raise ValueError("DTK 下载响应缺少 download_id")
 
-        # 4. Start transcription
-        tr_resp = await client.post("/api/v1/transcriptions",
-                                    json={"download_id": download_id, "normalize": True})
-        tr_resp.raise_for_status()
-        tr = tr_resp.json()
-        if not tr.get("success"):
-            raise ValueError(f"DTK 转写失败：{tr.get('error', {}).get('message', '未知错误')}")
-        transcription_id = tr["data"]["transcription_id"]
+        # A download is asynchronous in DTK v5. Poll its task until media is
+        # available; task failures contain stable error codes in the envelope.
+        # DTK removes/archives completed tasks, so a response with state=done
+        # must not be followed by a GET /tasks/{task_id} (which then returns
+        # 404 even though the media is available).
+        state = download.get("state") or ""
+        if state != "done":
+            for _ in range(60):
+                if task_id:
+                    task_response = await client.get(f"/api/v1/tasks/{task_id}")
+                    task_response.raise_for_status()
+                    task = unwrap(task_response.json(), "下载任务")
+                    state = task.get("state") or ""
+                    if state == "done":
+                        break
+                    if state in {"failed", "cancelled"}:
+                        unwrap({"success": False, "error": task.get("error") or {}}, "下载")
+                else:
+                    detail_response = await client.get(f"/api/v1/downloads/{download_id}")
+                    detail_response.raise_for_status()
+                    state = (detail_response.json().get("data") or {}).get("state") or ""
+                    if state == "done":
+                        break
+                    if state in {"failed", "cancelled", "partial"}:
+                        raise ValueError(f"DTK 下载失败，状态：{state}")
+                await asyncio.sleep(2)
+            else:
+                raise ValueError("DTK 下载超时（超过 120 秒）")
 
-        # 5. Wait for transcription (up to 5 min)
+        transcription_response = await client.post(
+            "/api/v1/transcriptions?wait=30",
+            json={"download_id": download_id, "normalize": True},
+        )
+        transcription_response.raise_for_status()
+        transcription = unwrap(transcription_response.json(), "转写")
+        transcription_id = transcription.get("transcription_id")
+        task_id = transcription.get("task_id")
+        if transcription.get("state") == "done" and transcription.get("text"):
+            return transcription.get("title") or url, transcription["text"][:15000]
+
         for _ in range(60):
+            if task_id:
+                task_response = await client.get(f"/api/v1/tasks/{task_id}")
+                task_response.raise_for_status()
+                task = unwrap(task_response.json(), "转写任务")
+                state = task.get("state")
+                result = task.get("data") or {}
+                if state == "done":
+                    text = result.get("text") or transcription.get("text") or ""
+                    if not text:
+                        raise ValueError("DTK 转写完成但文本为空")
+                    return result.get("title") or transcription.get("title") or url, text[:15000]
+                if state in {"failed", "cancelled"}:
+                    unwrap({"success": False, "error": task.get("error") or {}}, "转写")
+            elif transcription_id:
+                detail_response = await client.get(f"/api/v1/transcriptions/{transcription_id}")
+                detail_response.raise_for_status()
+                result = unwrap(detail_response.json(), "转写")
+                state = result.get("state")
+                if state == "done":
+                    text = result.get("text") or ""
+                    if not text:
+                        raise ValueError("DTK 转写完成但文本为空")
+                    return result.get("title") or url, text[:15000]
+                if state in {"failed", "cancelled"}:
+                    raise ValueError(f"DTK 转写失败，状态：{state}")
             await asyncio.sleep(5)
-            r = await client.get(f"/api/v1/transcriptions/{transcription_id}")
-            r.raise_for_status()
-            tdata = r.json().get("data", {})
-            state = tdata.get("state", "")
-            if state == "done":
-                text = tdata.get("text") or ""
-                if not text:
-                    raise ValueError("DTK 转写完成但文本为空")
-                return title, text[:15000]
-            if state in ("failed", "cancelled"):
-                raise ValueError(f"DTK 转写失败，状态：{state}")
 
     raise ValueError("DTK 转写超时（超过 5 分钟）")
 

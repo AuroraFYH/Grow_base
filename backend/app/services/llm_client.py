@@ -52,9 +52,29 @@ async def chat_completion(
     return data["choices"][0]["message"]["content"]
 
 
-def extract_json(text: str) -> dict:
-    """Extract first JSON object from LLM output."""
-    match = re.search(r"\{[\s\S]*\}", text)
-    if not match:
-        raise ValueError("LLM 响应中没有找到 JSON")
-    return json.loads(match.group())
+def extract_json(text: str, expected_keys: set[str] | None = None) -> dict:
+    """Extract a JSON object from an LLM response.
+
+    Models often wrap JSON in Markdown fences or add a short explanation. A
+    greedy regex can also capture multiple objects at once, so use the JSON
+    decoder to scan complete objects and optionally prefer a known root shape.
+    """
+    decoder = json.JSONDecoder()
+    candidates: list[tuple[int, dict]] = []
+    for match in re.finditer(r"\{", text):
+        try:
+            value, _ = decoder.raw_decode(text[match.start():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            score = len(expected_keys.intersection(value)) if expected_keys else 0
+            candidates.append((score, value))
+
+    if not candidates:
+        raise ValueError("LLM 响应中没有找到有效 JSON 对象")
+    if expected_keys:
+        matching = [candidate for candidate in candidates if candidate[0] > 0]
+        if not matching:
+            raise ValueError("LLM JSON 响应缺少预期字段")
+        return max(matching, key=lambda candidate: candidate[0])[1]
+    return candidates[0][1]

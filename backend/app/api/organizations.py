@@ -1,10 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func
 from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
+from app.models.feed import DigestDelivery, DigestSubscription
+from app.models.knowledge import ChatMessage, KnowledgeItem
+from app.models.wiki import (
+    KnowledgeOperationLog,
+    KnowledgeProposal,
+    WikiCitation,
+    WikiLink,
+    WikiPage,
+    WikiRevision,
+)
 from app.models.organization import Organization, OrganizationMember, Category, MemberRole, new_invite_code
 from app.schemas.organization import (
     OrganizationCreate, OrganizationUpdate, OrganizationOut,
@@ -162,6 +172,83 @@ async def update_organization(
     count_result = await db.execute(select(func.count()).where(OrganizationMember.organization_id == org_id))
     count = count_result.scalar()
     return organization_out(org, membership, count)
+
+
+@router.delete("/{org_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_organization(
+    org_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Permanently delete a knowledge base and all organization-owned data."""
+    membership = await get_membership(org_id, current_user.id, db)
+    org = await db.get(Organization, org_id)
+    if not membership or not org:
+        raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
+    if membership.role != MemberRole.owner or org.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="只有知识库创建者可以删除知识库")
+
+    # Keep upload files for cleanup after the transaction succeeds. Vault files
+    # are intentionally left untouched because they may contain user notes.
+    file_result = await db.execute(
+        select(KnowledgeItem.file_path).where(
+            KnowledgeItem.organization_id == org_id,
+            KnowledgeItem.file_path.is_not(None),
+        )
+    )
+    file_paths = [path for (path,) in file_result.all() if path]
+
+    wiki_page_ids = list(
+        await db.scalars(select(WikiPage.id).where(WikiPage.organization_id == org_id))
+    )
+    wiki_proposal_ids = list(
+        await db.scalars(select(KnowledgeProposal.id).where(KnowledgeProposal.organization_id == org_id))
+    )
+    subscription_ids = list(
+        await db.scalars(select(DigestSubscription.id).where(DigestSubscription.organization_id == org_id))
+    )
+
+    if wiki_page_ids:
+        await db.execute(delete(WikiRevision).where(WikiRevision.page_id.in_(wiki_page_ids)))
+        await db.execute(delete(WikiCitation).where(WikiCitation.page_id.in_(wiki_page_ids)))
+        await db.execute(
+            delete(WikiLink).where(
+                (WikiLink.source_page_id.in_(wiki_page_ids))
+                | (WikiLink.target_page_id.in_(wiki_page_ids))
+            )
+        )
+    if wiki_proposal_ids:
+        await db.execute(delete(KnowledgeOperationLog).where(KnowledgeOperationLog.proposal_id.in_(wiki_proposal_ids)))
+    await db.execute(delete(KnowledgeOperationLog).where(KnowledgeOperationLog.organization_id == org_id))
+    await db.execute(delete(KnowledgeProposal).where(KnowledgeProposal.organization_id == org_id))
+    await db.execute(delete(WikiPage).where(WikiPage.organization_id == org_id))
+
+    if subscription_ids:
+        await db.execute(delete(DigestDelivery).where(DigestDelivery.subscription_id.in_(subscription_ids)))
+    await db.execute(delete(DigestSubscription).where(DigestSubscription.organization_id == org_id))
+    await db.execute(delete(ChatMessage).where(ChatMessage.organization_id == org_id))
+    await db.execute(delete(KnowledgeItem).where(KnowledgeItem.organization_id == org_id))
+    await db.execute(delete(ClassificationConfig).where(ClassificationConfig.organization_id == org_id))
+
+    # Clear the self-referencing parent links before removing categories.
+    await db.execute(
+        Category.__table__.update()
+        .where(Category.organization_id == org_id)
+        .values(parent_id=None)
+    )
+    await db.execute(delete(Category).where(Category.organization_id == org_id))
+    await db.execute(delete(OrganizationMember).where(OrganizationMember.organization_id == org_id))
+    await db.delete(org)
+    await db.commit()
+
+    from pathlib import Path
+    from app.services.file_storage import UPLOAD_ROOT
+
+    upload_root = UPLOAD_ROOT.resolve()
+    for file_path in file_paths:
+        path = Path(file_path).expanduser().resolve()
+        if path.is_relative_to(upload_root) and path.is_file():
+            path.unlink()
 
 
 @router.post("/join", response_model=OrganizationOut)

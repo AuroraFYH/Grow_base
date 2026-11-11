@@ -294,6 +294,23 @@ button, input, textarea, select { font: inherit; }
 .member-permissions { display: flex; align-items: center; gap: 13px; }
 .member-permissions label { display: flex; align-items: center; gap: 5px; color: #9aa9bf; font-size: 12px; white-space: nowrap; }
 .full-access { color: #7690ad; font-size: 12px; }
+.danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid rgba(251, 113, 133, .28);
+  border-radius: 8px;
+  background: rgba(127, 29, 55, .12);
+}
+.danger-zone > div { display: flex; flex-direction: column; gap: 4px; }
+.danger-zone strong { color: #fb7185; font-size: 12px; }
+.danger-zone span { color: #a88191; font-size: 11px; }
+.danger-action { border-color: rgba(251, 113, 133, .45); color: #fb7185; }
+.danger-action:hover { border-color: #fb7185; background: rgba(251, 113, 133, .1); }
+.piggy-modal .danger-zone { border-color: rgba(190, 79, 112, .25); background: #fff3f5; }
+.piggy-modal .danger-zone strong, .piggy-modal .danger-action { color: #bd4f70; }
 
 .piggy-modal .invite-code-panel { background: #fff3f5; border-color: rgba(212, 108, 137, .24); }
 .piggy-modal .invite-code-panel strong { color: #bd4f70; }

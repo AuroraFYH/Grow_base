@@ -221,15 +221,15 @@ export default function SettingsPage() {
 
             <Title level={5} style={{ marginBottom: 4 }}>Obsidian 集成</Title>
             <Paragraph type="secondary" style={{ marginBottom: 16 }}>
-              填写 vault 根目录的绝对路径后，每条知识整理完成后会自动写入对应的 .md 文件，
-              并由 AI 判断应链接到 vault 中哪些已有笔记（生成 [[wikilinks]]）。
-              写入位置：<code>vault/GrowBase/知识库名/分类/</code>
+              填写 Vault 根目录后，视频教程整理完成会写入笔记；正式 Wiki 在管理员审核发布后同步为 .md 文件。
+              支持绝对路径和 <code>~/...</code> 路径。
+              Wiki 写入位置：<code>vault/GrowBase/知识库名/Wiki/</code>
             </Paragraph>
             <Form.Item
               name="vault_path"
               label="Obsidian Vault 路径"
             >
-              <Input placeholder="/home/用户名/Documents/MyVault（留空则不写入文件）" />
+              <Input placeholder="~/文档/grow_base（留空则不写入文件）" />
             </Form.Item>
             {config?.vault_path && (
               <div style={{ marginBottom: 16 }}>
@@ -269,7 +269,7 @@ export default function SettingsPage() {
             <li>添加链接时，AI 会自动抓取内容并按你的分类体系整理</li>
             <li>GitHub 仓库链接会读取 README，视频链接会提取字幕或语音转写</li>
             <li>未配置 AI 时会退回到关键词匹配模式，分类精度较低</li>
-            <li>配置 Obsidian vault 路径后，每条知识整理完成后会自动生成 <strong>视频笔记</strong> 和 <strong>知识节点</strong> 两类文件，并自动打 [[wikilinks]]</li>
+            <li>明确要求整理的视频会生成<strong>视频笔记</strong>和<strong>知识节点</strong>；审核通过的正式 Wiki 会自动同步，也可在 Wiki 页面手动补同步</li>
             <li>在 AI 助手里发送「<strong>重新生成链接</strong>，你的补充要求」可以让 AI 重新判断节点间的链接关系</li>
           </ul>
         </Card>

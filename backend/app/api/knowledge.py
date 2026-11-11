@@ -14,6 +14,7 @@ from app.core.security import get_current_user
 from app.models.knowledge import ChatMessage, KnowledgeItem
 from app.models.organization import Category, ClassificationConfig, MemberRole, OrganizationMember
 from app.models.user import User
+from app.models.wiki import WikiCitation, WikiPage
 from app.schemas.knowledge import (
     ChatMessageOut,
     ChatRequest,
@@ -27,7 +28,9 @@ from app.services.knowledge_ai import (
     classify_and_summarize,
     classify_text,
     generate_video_tutorial,
+    organize_source_document,
     organize_uploaded_document,
+    requests_document_organization,
     requests_video_tutorial,
     summarize,
 )
@@ -113,11 +116,26 @@ async def _process_item_with_llm(
             processing_reason = ""
             user_instructions = user_instructions or item.processing_instructions
 
-            # Step 1: fetch source content. Tutorial requests use the dedicated
-            # video transcription pipeline even when the user typed instructions.
-            if item.source_type == "video_tutorial":
+            # Step 1: fetch source content. Keep the intent check here as well
+            # as at creation time so records created before the video-tutorial
+            # routing fix can be retried without a database migration.
+            from app.services.content_fetcher import is_video_url
+            is_video_tutorial = bool(
+                item.source_url
+                and is_video_url(item.source_url)
+                and (
+                    item.source_type == "video_tutorial"
+                    or requests_video_tutorial(user_instructions, is_video=True)
+                )
+            )
+            from app.services.content_fetcher import is_github_url
+            is_document_source = bool(
+                (item.source_type == "document" or requests_document_organization(user_instructions))
+                and not (item.source_url and is_github_url(item.source_url))
+            )
+            if is_video_tutorial:
                 from app.models.user import UserLLMConfig
-                from app.services.content_fetcher import fetch_video_transcript, is_video_url
+                from app.services.content_fetcher import fetch_video_transcript
 
                 if not item.source_url or not is_video_url(item.source_url):
                     raise ValueError("生成视频教程需要受支持的 YouTube、B站、抖音或 TikTok 链接")
@@ -152,6 +170,24 @@ async def _process_item_with_llm(
                     model_name=model_name,
                 )
                 processing_reason = "已提取视频字幕并生成文字版教程。"
+            elif is_document_source:
+                raw_text = item.content or ""
+                fetched_title = ""
+                if item.source_url and not raw_text:
+                    from app.services.content_fetcher import fetch_content
+                    fetched_title, raw_text = await fetch_content(item.source_url)
+                if fetched_title and (not item.title or item.title == item.source_url[:240]):
+                    item.title = fetched_title[:240]
+                item.content = await organize_source_document(
+                    title=item.title,
+                    raw_text=raw_text,
+                    source_url=item.source_url,
+                    user_instructions=user_instructions,
+                    api_key=llm_creds[0] if llm_creds else None,
+                    base_url=llm_creds[1] if llm_creds else None,
+                    model_name=llm_creds[2] if llm_creds else None,
+                )
+                processing_reason = "已抓取来源正文并按要求整理成知识库文档。"
             elif item.source_type == "file":
                 if not item.file_path or not item.file_name:
                     raise ValueError("上传文件不存在")
@@ -324,12 +360,16 @@ async def create_knowledge(
     instructions = data.instructions.strip() if data.instructions else None
     title = (data.title or "").strip() or (source_url or "未命名知识")[:240]
 
-    from app.services.content_fetcher import is_video_url
+    from app.services.content_fetcher import is_github_url, is_video_url
 
     instruction_text = "\n".join(part for part in (instructions, content) if part)
     is_video = bool(source_url and is_video_url(source_url))
-    tutorial_requested = is_video
-    if is_video and requests_video_tutorial(instruction_text) and not instructions:
+    tutorial_requested = bool(is_video and requests_video_tutorial(instruction_text, is_video=is_video))
+    document_requested = bool(
+        requests_document_organization(instruction_text)
+        and not (source_url and is_github_url(source_url))
+    )
+    if tutorial_requested and not instructions:
         # Backward compatibility: older forms used the content box for requests.
         instructions = content
         content = None
@@ -341,6 +381,8 @@ async def create_knowledge(
         source_type=(
             "video_tutorial"
             if tutorial_requested
+            else "document"
+            if document_requested
             else "link" if source_url and not content else "note"
         ),
         source_url=source_url,
@@ -482,11 +524,17 @@ async def reprocess_knowledge(
         .options(selectinload(KnowledgeItem.category))
     )
     items = list(result.scalars().all())
-    from app.services.content_fetcher import is_video_url
+    from app.services.content_fetcher import is_github_url, is_video_url
 
     for item in items:
         if item.source_url and is_video_url(item.source_url):
-            item.source_type = "video_tutorial"
+            if requests_video_tutorial(item.processing_instructions, is_video=True):
+                item.source_type = "video_tutorial"
+        elif (
+            requests_document_organization(item.processing_instructions)
+            and not (item.source_url and is_github_url(item.source_url))
+        ):
+            item.source_type = "document"
         item.status = "processing"
     await db.commit()
 
@@ -662,33 +710,70 @@ async def chat(
     # ── normal chat ──
     else:
         words = [w for w in _search_words(data.message) if len(w) > 1]
-        query = (
-            select(KnowledgeItem)
-            .where(KnowledgeItem.organization_id == org_id)
-            .options(selectinload(KnowledgeItem.category))
-            .order_by(desc(KnowledgeItem.created_at))
-        )
+        wiki_query = select(WikiPage).where(
+            WikiPage.organization_id == org_id,
+            WikiPage.status == "published",
+        ).order_by(desc(WikiPage.updated_at), desc(WikiPage.id))
         if words:
-            conditions = []
+            wiki_conditions = []
             for word in words[:8]:
                 pattern = f"%{word}%"
-                conditions.extend([
-                    KnowledgeItem.title.ilike(pattern),
-                    KnowledgeItem.content.ilike(pattern),
-                    KnowledgeItem.summary.ilike(pattern),
+                wiki_conditions.extend([
+                    WikiPage.title.ilike(pattern),
+                    WikiPage.content.ilike(pattern),
+                    WikiPage.summary.ilike(pattern),
                 ])
-            query = query.where(or_(*conditions))
-        result = await db.execute(query.limit(8))
-        citations = list(result.scalars().all())
+            wiki_query = wiki_query.where(or_(*wiki_conditions))
+        wiki_result = await db.execute(wiki_query.limit(6))
+        wiki_pages = list(wiki_result.scalars().all())
+
+        if wiki_pages:
+            source_ids_result = await db.execute(
+                select(WikiCitation.source_id)
+                .where(WikiCitation.page_id.in_([page.id for page in wiki_pages]))
+                .distinct()
+                .limit(8)
+            )
+            source_ids = list(source_ids_result.scalars().all())
+            if source_ids:
+                source_result = await db.execute(
+                    select(KnowledgeItem)
+                    .where(KnowledgeItem.id.in_(source_ids))
+                    .options(selectinload(KnowledgeItem.category))
+                )
+                citations = list(source_result.scalars().all())
+            context = "\n\n".join(
+                f"[Wiki：{page.title}｜版本 {page.version}]\n{page.content[:3500]}"
+                for page in wiki_pages
+            )
+        else:
+            query = (
+                select(KnowledgeItem)
+                .where(KnowledgeItem.organization_id == org_id)
+                .options(selectinload(KnowledgeItem.category))
+                .order_by(desc(KnowledgeItem.created_at))
+            )
+            if words:
+                conditions = []
+                for word in words[:8]:
+                    pattern = f"%{word}%"
+                    conditions.extend([
+                        KnowledgeItem.title.ilike(pattern),
+                        KnowledgeItem.content.ilike(pattern),
+                        KnowledgeItem.summary.ilike(pattern),
+                    ])
+                query = query.where(or_(*conditions))
+            result = await db.execute(query.limit(8))
+            citations = list(result.scalars().all())
+            context = "\n".join(
+                f"[原始资料：{item.title}]（{item.category.name if item.category else '未分类'}）: {item.summary or ''}"
+                for item in citations
+            ) or "（知识库暂无内容）"
         citation_outs = [to_out(item) for item in citations]
 
         llm_creds = await get_user_llm_config(current_user.id, db)
         if llm_creds:
             api_key, base_url, model_name = llm_creds
-            context = "\n".join(
-                f"[{item.title}]（{item.category.name if item.category else '未分类'}）: {item.summary or ''}"
-                for item in citations
-            ) or "（知识库暂无内容）"
             try:
                 from app.services.llm_client import chat_completion
                 answer = await chat_completion(
@@ -696,7 +781,7 @@ async def chat(
                     model_name=model_name,
                     base_url=base_url,
                     messages=[
-                        {"role": "system", "content": f"你是用户的知识库助手。以下是知识库中与问题相关的内容：\n{context}\n\n请根据以上内容回答用户的问题，若无相关内容请如实说明。"},
+                        {"role": "system", "content": f"你是用户的知识库助手。优先依据已经审核发布的 Wiki 回答；只有没有相关 Wiki 时才使用原始资料。以下是与问题相关的知识：\n{context}\n\n请根据以上内容回答，明确区分已沉淀知识与不确定推断；若无相关内容请如实说明。"},
                         {"role": "user", "content": data.message},
                     ],
                     max_tokens=800,
@@ -704,7 +789,14 @@ async def chat(
             except Exception as e:
                 answer = answer_from_knowledge(data.message, citations) + f"\n\n（AI 助手暂时不可用：{e}）"
         else:
-            answer = answer_from_knowledge(data.message, citations) + "\n\n提示：在设置中配置 AI 模型后，可获得更智能的回答。"
+            if wiki_pages:
+                answer = "根据已发布 Wiki 找到以下相关内容：\n\n" + "\n\n".join(
+                    f"- **{page.title}**：{page.summary or page.content[:240]}"
+                    for page in wiki_pages
+                )
+            else:
+                answer = answer_from_knowledge(data.message, citations)
+            answer += "\n\n提示：在设置中配置 AI 模型后，可获得更完整的综合回答。"
 
     assistant_message = ChatMessage(
         organization_id=org_id,

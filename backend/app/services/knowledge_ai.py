@@ -13,15 +13,28 @@ _TUTORIAL_WORDS = ("教程", "文档", "知识库", "文章", "笔记", "文字�
 _CONVERSION_WORDS = ("转成", "转换", "整理", "生成", "制作", "提取", "沉淀", "写成", "变成", "convert", "create")
 
 
-def requests_video_tutorial(value: str | None) -> bool:
-    """Detect an explicit request to turn video/audio into a written document."""
+def requests_document_organization(value: str | None) -> bool:
+    """Detect an explicit request to turn a source into a written document."""
     text = (value or "").strip().lower()
     if not text:
         return False
     has_action = any(word in text for word in _CONVERSION_WORDS)
-    has_video = any(word in text for word in _VIDEO_WORDS)
     has_output = any(word in text for word in _TUTORIAL_WORDS)
-    return has_action and has_output and (has_video or "字幕" in text)
+    return has_action and has_output
+
+
+def requests_video_tutorial(value: str | None, *, is_video: bool = False) -> bool:
+    """Detect an explicit request to turn a video/audio source into a document.
+
+    The source URL is authoritative for media type. Users commonly write only
+    "整理成文档" after pasting a video link, so requiring the word "视频" in
+    the instruction would incorrectly route it through the ordinary link path.
+    """
+    text = (value or "").strip().lower()
+    if not text:
+        return False
+    has_video = any(word in text for word in _VIDEO_WORDS)
+    return requests_document_organization(text) and (has_video or "字幕" in text or is_video)
 
 
 def _missing_tutorial_sections(tutorial: str) -> list[str]:
@@ -160,12 +173,33 @@ async def organize_uploaded_document(
     model_name: str | None,
 ) -> str:
     """Turn extracted file text into a useful, structured knowledge document."""
+    return await organize_source_document(
+        title=title,
+        raw_text=raw_text,
+        source_url=None,
+        user_instructions=user_instructions,
+        api_key=api_key,
+        base_url=base_url,
+        model_name=model_name,
+    )
+
+
+async def organize_source_document(
+    title: str,
+    raw_text: str,
+    source_url: str | None,
+    user_instructions: str | None,
+    api_key: str | None,
+    base_url: str | None,
+    model_name: str | None,
+) -> str:
+    """Turn extracted source text into a useful, structured knowledge document."""
     if not api_key or not model_name:
-        raise ValueError("AI 整理文件需要先在设置中配置可用的 AI 模型")
+        raise ValueError("AI 整理来源需要先在设置中配置可用的 AI 模型")
     if not raw_text.strip():
         raise ValueError("没有从文件中提取到可整理的文字")
 
-    system_prompt = """你是一名严谨的中文知识库编辑。请把用户上传文件中的原始文字重组为一份可以长期阅读和复用的 Markdown 文档，而不是简单复制、逐段缩写或堆砌摘要。
+    system_prompt = """你是一名严谨的中文知识库编辑。请把来源中的原始文字重组为一份可以长期阅读和复用的 Markdown 文档，而不是简单复制、逐段缩写或堆砌摘要。
 
 要求：
 - 识别主题和读者真正需要掌握的内容，删除重复、噪声、页眉页脚和无关文字
@@ -176,9 +210,10 @@ async def organize_uploaded_document(
 - 使用清晰的 Markdown 标题、列表和代码块；不要输出 YAML frontmatter
 - 只输出整理后的最终文档，不解释整理过程"""
     user_prompt = (
-        f"文件标题：{title}\n"
+        f"来源标题：{title}\n"
+        f"来源链接：{source_url or '无'}\n"
         f"用户处理要求：{user_instructions or '整理成结构化、可复用的知识库文档'}\n\n"
-        f"文件原文：\n{raw_text[:30_000]}"
+        f"来源原文：\n{raw_text[:30_000]}"
     )
     try:
         result = await chat_completion(

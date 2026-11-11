@@ -3,7 +3,7 @@ import api from './client'
 export interface KnowledgeItem {
   id: number
   title: string
-  source_type: 'link' | 'note' | 'video_tutorial' | 'file'
+  source_type: 'link' | 'note' | 'document' | 'video_tutorial' | 'file' | 'digest'
   source_url: string | null
   file_name: string | null
   file_mime_type: string | null

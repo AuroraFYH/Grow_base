@@ -72,6 +72,8 @@ export const orgApi = {
 
   get: (id: number) => api.get<OrganizationOut>(`/api/organizations/${id}`),
 
+  remove: (id: number) => api.delete(`/api/organizations/${id}`),
+
   update: (id: number, data: { name?: string; description?: string }) =>
     api.patch<OrganizationOut>(`/api/organizations/${id}`, data),
 

@@ -9,8 +9,10 @@ import { knowledgeApi } from '../api/knowledge'
 import type { ChatMessage, KnowledgeItem } from '../api/knowledge'
 import { feedsApi } from '../api/feeds'
 import type { DigestSubscription } from '../api/feeds'
+import { wikiApi } from '../api/wiki'
 import { useAuthStore } from '../store/auth'
 import KnowledgeOrb from '../components/KnowledgeOrb'
+import WikiWorkspace from '../components/WikiWorkspace'
 
 // ──────────────────────────────────────────────
 // tiny inline SVG icons (no external deps needed)
@@ -243,13 +245,14 @@ interface VaultProps {
   activeCatId: number | null
   onSelectOrg: (orgId: number) => void
   onSelectCat: (orgId: number, catId: number) => void
+  onAddKnowledge: (orgId: number) => void
   onEditTemplate: (org: OrganizationOut) => void
 }
 
 function SidebarVault({
   org, categories, config, itemCounts, totalCount,
   activeOrgId, activeCatId,
-  onSelectOrg, onSelectCat, onEditTemplate,
+  onSelectOrg, onSelectCat, onAddKnowledge, onEditTemplate,
 }: VaultProps) {
   const [open, setOpen] = useState(activeOrgId === org.id)
   const isActive = activeOrgId === org.id
@@ -279,6 +282,16 @@ function SidebarVault({
         <Icon d={I.book} size={13} className="vault-icon" />
         <span className="vault-name">{org.name}</span>
         <span className="vault-count">{totalCount}</span>
+        {org.can_add_knowledge && (
+          <button
+            className="vault-add-btn"
+            title={`向「${org.name}」添加知识`}
+            aria-label={`向「${org.name}」添加知识`}
+            onClick={(event) => { event.stopPropagation(); onAddKnowledge(org.id) }}
+          >
+            <Icon d={I.plus} size={11} strokeWidth={2.5} />
+          </button>
+        )}
       </div>
 
       {open && (
@@ -323,6 +336,7 @@ function ShelfBook({
   coverImage,
   theme,
   onClick,
+  onAdd,
 }: {
   org: OrganizationOut
   count: number
@@ -332,6 +346,7 @@ function ShelfBook({
   coverImage?: string
   theme: AppearanceSettings['theme']
   onClick: () => void
+  onAdd?: () => void
 }) {
   const piggyVariants: PiggyVariant[] = ['standing', 'sleeping', 'dizzy']
   const piggyCovers = [
@@ -350,17 +365,29 @@ function ShelfBook({
       }
 
   return (
-    <button className={`shelf-book${active ? ' active' : ''}${theme === 'piggy' && !coverImage ? ' piggy-book' : ''}`} onClick={onClick} title={`打开 ${org.name}`}>
-      <span className="shelf-book-cover" style={coverStyle}>
-        <span className="book-cover-shine" />
-        {theme === 'piggy' && !coverImage
-          ? <span className="book-cover-pig"><PiggyMascot compact variant={piggyVariants[index % piggyVariants.length]} /></span>
-          : <span className="book-cover-mark">G<span>+</span></span>}
-        <strong>{org.name}</strong>
-        <small>{count} 条知识</small>
-      </span>
-      <span className="shelf-book-label">{org.name}</span>
-    </button>
+    <div className={`shelf-book-wrap${active ? ' active' : ''}`}>
+      <button className={`shelf-book${theme === 'piggy' && !coverImage ? ' piggy-book' : ''}`} onClick={onClick} title={`打开 ${org.name}`}>
+        <span className="shelf-book-cover" style={coverStyle}>
+          <span className="book-cover-shine" />
+          {theme === 'piggy' && !coverImage
+            ? <span className="book-cover-pig"><PiggyMascot compact variant={piggyVariants[index % piggyVariants.length]} /></span>
+            : <span className="book-cover-mark">G<span>+</span></span>}
+          <strong>{org.name}</strong>
+          <small>{count} 条知识</small>
+        </span>
+        <span className="shelf-book-label">{org.name}</span>
+      </button>
+      {onAdd && (
+        <button
+          className="shelf-book-add"
+          title={`向「${org.name}」添加知识`}
+          aria-label={`向「${org.name}」添加知识`}
+          onClick={onAdd}
+        >
+          <Icon d={I.plus} size={13} strokeWidth={2.5} />
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -368,6 +395,7 @@ function ShelfBook({
 // Main WorkspacePage
 // ──────────────────────────────────────────────
 type ActiveView = 'knowledge' | 'assistant' | 'settings'
+type KnowledgeSection = 'sources' | 'wiki' | 'review' | 'health'
 
 interface OrgState {
   org: OrganizationOut
@@ -389,8 +417,10 @@ export default function WorkspacePage() {
   const [activeOrgId, setActiveOrgId] = useState<number | null>(null)
   const [activeCatId, setActiveCatId] = useState<number | null>(null)
   const [activeView, setActiveView] = useState<ActiveView>('knowledge')
+  const [knowledgeSection, setKnowledgeSection] = useState<KnowledgeSection>('sources')
 
   const [addOpen, setAddOpen] = useState(false)
+  const [addTargetOrgId, setAddTargetOrgId] = useState<number | null>(null)
   const [addLoading, setAddLoading] = useState(false)
   const [addMode, setAddMode] = useState<'text' | 'file'>('text')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
@@ -408,6 +438,8 @@ export default function WorkspacePage() {
   const [digestPickerOpen, setDigestPickerOpen] = useState(false)
   const [selectedDigestId, setSelectedDigestId] = useState<number | null>(null)
   const [digestRunningId, setDigestRunningId] = useState<number | null>(null)
+  const [compilingSourceId, setCompilingSourceId] = useState<number | null>(null)
+  const [wikiRefreshToken, setWikiRefreshToken] = useState(0)
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatInput, setChatInput] = useState('')
@@ -502,6 +534,7 @@ export default function WorkspacePage() {
 
   const activeState = activeOrgId ? orgStates[activeOrgId] : null
   const activeOrg = orgs.find((o) => o.id === activeOrgId) ?? activeState?.org ?? null
+  const addTargetOrg = orgs.find((o) => o.id === addTargetOrgId) ?? null
   const activeSubscriptions = subscriptions.filter(
     (subscription) => subscription.organization_id === activeOrgId && subscription.enabled
   )
@@ -531,8 +564,33 @@ export default function WorkspacePage() {
     ? flattenCategories(categories).find((c) => c.id === activeCatId)?.name ?? '未知分类'
     : '全部'
 
+  const openAddKnowledge = (orgId: number) => {
+    const target = orgs.find((org) => org.id === orgId)
+    if (!target?.can_add_knowledge) {
+      message.error('你没有向这个知识库添加内容的权限')
+      return
+    }
+    setActiveOrgId(orgId)
+    setActiveCatId(null)
+    setSearch('')
+    setAddTargetOrgId(orgId)
+    setAddOpen(true)
+  }
+
+  const closeAddKnowledge = () => {
+    setAddOpen(false)
+    setAddTargetOrgId(null)
+    form.resetFields()
+    setUploadFile(null)
+    setShouldProcessFile(false)
+  }
+
   const handleAdd = async (values: { title?: string; source_url?: string; content?: string; instructions?: string }) => {
-    if (!activeOrgId) return
+    const targetOrgId = addTargetOrgId
+    if (!targetOrgId) {
+      message.error('请先选择要添加到的知识库')
+      return
+    }
     if (addMode === 'file' && !uploadFile) {
       message.error('请先选择要上传的文件')
       return
@@ -540,22 +598,20 @@ export default function WorkspacePage() {
     setAddLoading(true)
     try {
       const { data: newItem } = addMode === 'file'
-        ? await knowledgeApi.upload(activeOrgId, {
+        ? await knowledgeApi.upload(targetOrgId, {
             file: uploadFile!,
             title: values.title,
             shouldProcess: shouldProcessFile,
             instructions: values.instructions,
           })
-        : await knowledgeApi.create(activeOrgId, values)
-      setAddOpen(false)
-      form.resetFields()
-      setUploadFile(null)
-      setShouldProcessFile(false)
+        : await knowledgeApi.create(targetOrgId, values)
       setOrgStates((prev) => ({
         ...prev,
-        [activeOrgId]: { ...prev[activeOrgId], items: [newItem, ...(prev[activeOrgId]?.items ?? [])] },
+        [targetOrgId]: { ...prev[targetOrgId], items: [newItem, ...(prev[targetOrgId]?.items ?? [])] },
       }))
-      message.success(addMode === 'file' && !shouldProcessFile ? '文件已存入知识库（未进行 AI 整理）' : '已添加，AI 正在后台处理…')
+      const targetName = addTargetOrg?.name ?? '所选知识库'
+      closeAddKnowledge()
+      message.success(addMode === 'file' && !shouldProcessFile ? `文件已存入「${targetName}」（未进行 AI 整理）` : `已添加到「${targetName}」，AI 正在后台处理…`)
     } catch (err: any) {
       message.error(err.response?.data?.detail || '添加知识失败')
     } finally {
@@ -575,6 +631,21 @@ export default function WorkspacePage() {
       URL.revokeObjectURL(url)
     } catch (err: any) {
       message.error(err.response?.data?.detail || '文件下载失败')
+    }
+  }
+
+  const handleCompileToWiki = async (item: KnowledgeItem) => {
+    if (!activeOrgId || compilingSourceId !== null) return
+    setCompilingSourceId(item.id)
+    try {
+      await wikiApi.createProposal(activeOrgId, item.id, undefined, Boolean(item.source_url?.includes('github.com')))
+      setKnowledgeSection('review')
+      setWikiRefreshToken((value) => value + 1)
+      message.success('已创建知识编译任务，AI 的修改会先进入待审核区')
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '无法创建 Wiki 提案')
+    } finally {
+      setCompilingSourceId(null)
     }
   }
 
@@ -757,6 +828,46 @@ export default function WorkspacePage() {
     }
   }
 
+  const handleDeleteOrganization = () => {
+    if (!activeOrgId || activeOrg?.current_user_role !== 'owner') return
+    const orgId = activeOrgId
+    const orgName = activeOrg.name
+    Modal.confirm({
+      title: `删除知识库「${orgName}」？`,
+      content: '此操作会永久删除成员、资料、分类、Wiki、订阅和聊天记录，且无法恢复。',
+      okText: '永久删除',
+      cancelText: '取消',
+      okType: 'danger',
+      onOk: async () => {
+        try {
+          await orgApi.remove(orgId)
+          const remaining = orgs.filter((org) => org.id !== orgId)
+          setOrgs(remaining)
+          setOrgStates((prev) => {
+            const next = { ...prev }
+            delete next[orgId]
+            return next
+          })
+          setSubscriptions((prev) => prev.filter((subscription) => subscription.organization_id !== orgId))
+          setTeamOpen(false)
+          setActiveCatId(null)
+          setActiveOrgId(remaining[0]?.id ?? null)
+          setAppearance((prev) => {
+            const coverImages = { ...prev.coverImages }
+            const coverStyles = { ...prev.coverStyles }
+            delete coverImages[String(orgId)]
+            delete coverStyles[String(orgId)]
+            return { ...prev, coverImages, coverStyles }
+          })
+          message.success(`知识库「${orgName}」已删除`)
+        } catch (err: any) {
+          message.error(err.response?.data?.detail || '删除知识库失败')
+          throw err
+        }
+      },
+    })
+  }
+
   const handleLogout = () => {
     logout()
     navigate('/login')
@@ -892,6 +1003,7 @@ export default function WorkspacePage() {
                     activeCatId={activeCatId}
                     onSelectOrg={(id) => { setActiveOrgId(id); setActiveCatId(null); setSearch(''); setActiveView('knowledge') }}
                     onSelectCat={(orgId, catId) => { setActiveOrgId(orgId); setActiveCatId(catId); setSearch(''); setActiveView('knowledge') }}
+                    onAddKnowledge={openAddKnowledge}
                     onEditTemplate={(o) => setTemplateOrgId(o.id)}
                   />
                 </div>
@@ -925,26 +1037,30 @@ export default function WorkspacePage() {
               </button>
               {activeView === 'knowledge' && (
                 <>
-                  <div className="ws-search-box">
-                    <Icon d={I.search} size={13} />
-                    <input placeholder="搜索知识…" value={search} onChange={(e) => setSearch(e.target.value)} />
-                  </div>
-                  {activeOrg?.can_add_knowledge && (
-                    <button
-                      className={`ws-btn ws-digest-btn${digestRunningId ? ' loading' : ''}`}
-                      onClick={handleRunDigest}
-                      disabled={digestRunningId !== null}
-                      title={activeSubscriptions.length > 0 ? '立即采集并生成最新简讯' : '先创建自动简讯订阅'}
-                    >
-                      <Icon d={I.refresh} size={13} />
-                      {digestRunningId ? '采集中…' : '生成简讯'}
-                    </button>
-                  )}
-                  {activeOrg?.current_user_role !== 'member' && <button className="ws-btn" onClick={handleReprocess}><Icon d={I.refresh} size={13} /></button>}
-                  {activeOrg?.can_add_knowledge && (
-                    <button className="ws-btn ws-btn-primary" onClick={() => setAddOpen(true)}>
-                      <Icon d={I.plus} size={13} strokeWidth={2.5} />添加知识
-                    </button>
+                  {knowledgeSection === 'sources' && (
+                    <>
+                      <div className="ws-search-box">
+                        <Icon d={I.search} size={13} />
+                        <input placeholder="搜索资料…" value={search} onChange={(e) => setSearch(e.target.value)} />
+                      </div>
+                      {activeOrg?.can_add_knowledge && (
+                        <button
+                          className={`ws-btn ws-digest-btn${digestRunningId ? ' loading' : ''}`}
+                          onClick={handleRunDigest}
+                          disabled={digestRunningId !== null}
+                          title={activeSubscriptions.length > 0 ? '立即采集并生成最新简讯' : '先创建自动简讯订阅'}
+                        >
+                          <Icon d={I.refresh} size={13} />
+                          {digestRunningId ? '采集中…' : '生成简讯'}
+                        </button>
+                      )}
+                      {activeOrg?.current_user_role !== 'member' && <button className="ws-btn" onClick={handleReprocess}><Icon d={I.refresh} size={13} /></button>}
+                      {activeOrg?.can_add_knowledge && (
+                        <button className="ws-btn ws-btn-primary" onClick={() => activeOrgId && openAddKnowledge(activeOrgId)}>
+                          <Icon d={I.plus} size={13} strokeWidth={2.5} />添加知识
+                        </button>
+                      )}
+                    </>
                   )}
                 </>
               )}
@@ -1030,6 +1146,7 @@ export default function WorkspacePage() {
                           coverImage={appearance.coverImages[String(org.id)]}
                           theme={appearance.theme}
                           onClick={() => { setActiveOrgId(org.id); setActiveCatId(null); setSearch('') }}
+                          onAdd={org.can_add_knowledge ? () => openAddKnowledge(org.id) : undefined}
                         />
                       )
                     })}
@@ -1058,6 +1175,14 @@ export default function WorkspacePage() {
                     {appearance.theme === 'piggy' && <div className="hero-piggy"><PiggyMascot /></div>}
                   </div>
                 </section>
+                <nav className="knowledge-sections" aria-label="知识库视图">
+                  <button className={knowledgeSection === 'sources' ? 'active' : ''} onClick={() => setKnowledgeSection('sources')}><Icon d={I.file} size={13} />资料箱</button>
+                  <button className={knowledgeSection === 'wiki' ? 'active' : ''} onClick={() => setKnowledgeSection('wiki')}><Icon d={I.book} size={13} />Wiki</button>
+                  <button className={knowledgeSection === 'review' ? 'active' : ''} onClick={() => setKnowledgeSection('review')}><Icon d={I.edit} size={13} />待审核</button>
+                  <button className={knowledgeSection === 'health' ? 'active' : ''} onClick={() => setKnowledgeSection('health')}><Icon d={I.apps} size={13} />健康检查</button>
+                </nav>
+                {knowledgeSection === 'sources' ? (
+                  <>
                 {!config?.template_key && activeOrgId && activeOrg?.current_user_role !== 'member' && (
                   <div className="ws-banner">
                     <span>还没有选择分类体系。选择一套模板后，AI 才能按你的规则整理知识。</span>
@@ -1097,6 +1222,11 @@ export default function WorkspacePage() {
                     {appearance.theme === 'piggy' ? <PiggyMascot variant="sleeping" /> : <Icon d={I.book} size={36} />}
                     <strong>这里还没有知识</strong>
                     <p>可添加链接、笔记，或直接上传文件到知识库</p>
+                    {activeOrg?.can_add_knowledge && activeOrgId && (
+                      <button className="ws-btn ws-btn-primary" onClick={() => openAddKnowledge(activeOrgId)}>
+                        <Icon d={I.plus} size={13} strokeWidth={2.5} />添加第一条知识
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className={viewMode === 'grid' ? 'k-grid' : 'k-list'}>
@@ -1136,6 +1266,17 @@ export default function WorkspacePage() {
                                   <Icon d={I.download} size={13} />下载文件
                                 </button>
                               )}
+                              {activeOrg?.can_add_knowledge && activeOrg.can_use_ai && item.status !== 'error' && (
+                                <button
+                                  className="k-view-btn wiki-compile-btn"
+                                  disabled={compilingSourceId !== null}
+                                  onClick={() => void handleCompileToWiki(item)}
+                                  title={item.source_url?.includes('github.com') ? '提取项目事实和可复用技术知识，不生成教程' : '生成可审核的 Wiki 更新提案'}
+                                >
+                                  <Icon d={I.robot} size={13} />
+                                  {compilingSourceId === item.id ? '编译中…' : item.source_url?.includes('github.com') ? '提取项目知识' : '沉淀到 Wiki'}
+                                </button>
+                              )}
                               {(activeOrg?.current_user_role !== 'member' || (activeOrg.can_delete_own && item.created_by === user?.id)) && (
                                 <Popconfirm title="确定移除这条知识？" onConfirm={() => handleRemove(item.id)}>
                                   <button className="ws-icon-btn danger"><Icon d={I.trash} size={13} /></button>
@@ -1148,6 +1289,17 @@ export default function WorkspacePage() {
                     })}
                   </div>
                 )}
+                  </>
+                ) : activeOrgId ? (
+                  <WikiWorkspace
+                    orgId={activeOrgId}
+                    section={knowledgeSection}
+                    isAdmin={activeOrg?.current_user_role === 'owner' || activeOrg?.current_user_role === 'admin'}
+                    refreshToken={wikiRefreshToken}
+                    onOpenReview={() => setKnowledgeSection('review')}
+                    theme={appearance.theme}
+                  />
+                ) : null}
               </>
             )}
           </div>
@@ -1166,8 +1318,19 @@ export default function WorkspacePage() {
       </Modal>
 
       {/* ADD KNOWLEDGE MODAL */}
-      <Modal rootClassName={appearance.theme === 'piggy' ? 'piggy-modal' : ''} title="添加知识" open={addOpen} onCancel={() => { setAddOpen(false); form.resetFields(); setUploadFile(null); setShouldProcessFile(false) }} footer={null} width={580}>
+      <Modal
+        rootClassName={appearance.theme === 'piggy' ? 'piggy-modal' : ''}
+        title={addTargetOrg ? `向「${addTargetOrg.name}」添加知识` : '添加知识'}
+        open={addOpen}
+        onCancel={closeAddKnowledge}
+        footer={null}
+        width={580}
+      >
         <Form form={form} layout="vertical" onFinish={handleAdd} style={{ marginTop: 16 }}>
+          <div className="add-target-banner">
+            <span className="add-target-icon"><Icon d={I.book} size={14} /></span>
+            <span><small>将保存到</small><strong>{addTargetOrg?.name ?? '请选择知识库'}</strong></span>
+          </div>
           <div className="add-mode-tabs">
             <button type="button" className={addMode === 'text' ? 'active' : ''} onClick={() => setAddMode('text')}><Icon d={I.link} size={14} />链接 / 笔记</button>
             <button type="button" className={addMode === 'file' ? 'active' : ''} onClick={() => setAddMode('file')}><Icon d={I.upload} size={14} />上传文件</button>
@@ -1323,6 +1486,14 @@ export default function WorkspacePage() {
                 )
               })}
             </div>
+            {activeOrg.current_user_role === 'owner' && (
+              <section className="danger-zone">
+                <div><strong>删除知识库</strong><span>永久删除这个知识库及其全部内容</span></div>
+                <button className="ws-btn danger-action" onClick={handleDeleteOrganization}>
+                  <Icon d={I.trash} size={13} />删除知识库
+                </button>
+              </section>
+            )}
           </div>
         )}
       </Modal>
@@ -1540,9 +1711,10 @@ html, body { height: 100%; margin: 0; padding: 0; }
 .shelf-header-actions { display: flex; align-items: center; gap: 12px; }
 .shelf-count { color: var(--ws-dim); font: 10px "IBM Plex Mono", monospace; letter-spacing: .08em; white-space: nowrap; }
 .book-shelf-track { position: relative; z-index: 1; display: flex; align-items: flex-end; gap: 18px; min-height: 194px; padding: 22px 2px 19px; overflow-x: auto; }
-.shelf-book, .shelf-add-book { appearance: none; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
-.shelf-book { width: 116px; flex: 0 0 116px; text-align: left; transition: transform .2s ease; }
-.shelf-book:hover, .shelf-book.active { transform: translateY(-9px); }
+.shelf-book, .shelf-add-book, .shelf-book-add { appearance: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+.shelf-book-wrap { position: relative; width: 116px; flex: 0 0 116px; transition: transform .2s ease; }
+.shelf-book-wrap:hover, .shelf-book-wrap.active { transform: translateY(-9px); }
+.shelf-book { width: 116px; background: none; text-align: left; }
 .shelf-book-cover { position: relative; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; width: 100%; height: 145px; padding: 14px 12px; box-sizing: border-box; border-radius: 3px 8px 8px 3px; border-left: 5px solid color-mix(in srgb, var(--book-accent, #6ee7f9) 70%, #101827); box-shadow: 8px 11px 0 rgba(0,0,0,.24), 0 18px 26px rgba(0,0,0,.24); background-size: cover; background-position: center; isolation: isolate; }
 .shelf-book-cover::after { content: ''; position: absolute; inset: 0; z-index: -1; background: linear-gradient(180deg, transparent 26%, rgba(0,0,0,.56)); }
 .book-cover-shine { position: absolute; top: -25%; right: 12px; width: 18px; height: 170%; transform: rotate(17deg); background: rgba(255,255,255,.12); filter: blur(5px); }
@@ -1551,7 +1723,14 @@ html, body { height: 100%; margin: 0; padding: 0; }
 .shelf-book-cover strong { display: -webkit-box; overflow: hidden; margin-top: auto; color: #fff; font-size: 12px; line-height: 1.25; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .shelf-book-cover small { margin-top: 6px; color: rgba(255,255,255,.68); font-size: 9px; }
 .shelf-book-label { display: block; overflow: hidden; margin-top: 13px; color: var(--ws-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.shelf-book.active .shelf-book-label { color: var(--ws-accent); }
+.shelf-book-wrap.active .shelf-book-label { color: var(--ws-accent); }
+.shelf-book-add {
+  position: absolute; z-index: 3; top: 8px; right: 5px; display: grid; place-items: center;
+  width: 28px; height: 28px; padding: 0; border: 1px solid rgba(255,255,255,.34); border-radius: 50%;
+  background: rgba(7,12,22,.72); color: #fff; box-shadow: 0 5px 15px rgba(0,0,0,.28); backdrop-filter: blur(8px);
+  transition: background .15s, border-color .15s, transform .15s;
+}
+.shelf-book-add:hover { border-color: var(--book-accent, var(--ws-accent)); background: var(--ws-accent); color: #061018; transform: scale(1.08); }
 .shelf-add-book { display: flex; flex: 0 0 116px; width: 116px; height: 145px; align-items: center; justify-content: center; flex-direction: column; gap: 7px; margin-bottom: 0; border: 1px dashed rgba(135, 159, 201, .28); border-radius: 6px; color: var(--ws-muted); transition: border-color .15s, color .15s, background .15s; }
 .shelf-add-book:hover { border-color: var(--ws-accent); color: var(--ws-accent); background: rgba(110,231,249,.05); }
 .shelf-add-icon { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid currentColor; border-radius: 50%; }
@@ -1653,6 +1832,12 @@ html, body { height: 100%; margin: 0; padding: 0; }
 .vault-icon { color: var(--accent-2); flex-shrink: 0; display: flex; }
 .vault-name { font-weight: 500; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vault-count { font-size: 11px; color: var(--ws-dim); }
+.vault-add-btn {
+  display: grid; place-items: center; width: 21px; height: 21px; flex: 0 0 21px; padding: 0;
+  border: 1px solid color-mix(in srgb, var(--ws-accent) 32%, transparent); border-radius: 50%;
+  background: color-mix(in srgb, var(--ws-accent) 8%, transparent); color: var(--ws-accent); cursor: pointer;
+}
+.vault-add-btn:hover { background: var(--ws-accent); color: #07101a; }
 .vault-children { padding-left: 8px; }
 .vault-footer {
   display: flex; align-items: center; justify-content: space-between;
@@ -1715,6 +1900,15 @@ html, body { height: 100%; margin: 0; padding: 0; }
 .ws-link-btn:hover { background: var(--ws-hover); }
 .muted { color: var(--ws-muted); }
 .field-label { display: block; font-size: 12px; font-weight: 600; color: var(--ws-muted); margin-bottom: 6px; }
+.add-target-banner {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--ws-accent) 26%, var(--ws-border)); border-radius: 7px;
+  background: color-mix(in srgb, var(--ws-accent) 7%, var(--ws-item)); color: var(--ws-fg);
+}
+.add-target-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; background: color-mix(in srgb, var(--ws-accent) 14%, transparent); color: var(--ws-accent); }
+.add-target-banner > span:last-child { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.add-target-banner small { color: var(--ws-muted); font-size: 10px; }
+.add-target-banner strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .ws-content { flex: 1; overflow-y: auto; padding: 24px 28px; }
 .ws-loading { display: flex; align-items: center; justify-content: center; height: 200px; color: var(--ws-muted); }
 .ws-empty {
@@ -1734,6 +1928,101 @@ html, body { height: 100%; margin: 0; padding: 0; }
   border-color: color-mix(in srgb, var(--ws-accent) 25%, var(--ws-border));
   align-items: center; gap: 8px;
 }
+.knowledge-sections {
+  display: flex; align-items: center; gap: 4px; margin: 0 0 18px; padding: 4px;
+  border: 1px solid var(--ws-border); border-radius: 7px; background: color-mix(in srgb, var(--ws-panel) 82%, transparent);
+}
+.knowledge-sections button {
+  display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 0 14px;
+  border: 0; border-radius: 5px; background: transparent; color: var(--ws-muted); font: inherit; font-size: 12px; cursor: pointer;
+}
+.knowledge-sections button:hover { color: var(--ws-fg); background: var(--ws-hover); }
+.knowledge-sections button.active { color: var(--ws-accent); background: var(--ws-active); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ws-accent) 18%, transparent); }
+.wiki-compile-btn { color: var(--ws-accent) !important; }
+.wiki-compile-btn:disabled { opacity: .5; cursor: wait; }
+.wiki-workspace { min-height: 280px; }
+.wiki-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-bottom: 14px; }
+.wiki-toolbar span { margin-right: auto; color: var(--ws-muted); font-size: 11px; }
+.wiki-loading { display: grid; min-height: 280px; place-items: center; color: var(--ws-muted); }
+.wiki-empty { display: flex; min-height: 280px; flex-direction: column; align-items: center; justify-content: center; gap: 9px; color: var(--ws-muted); text-align: center; }
+.wiki-empty-mark { display: grid; width: 46px; height: 46px; place-items: center; border: 1px solid var(--ws-border); border-radius: 50%; color: var(--ws-accent); font: 600 17px "IBM Plex Mono", monospace; }
+.wiki-empty strong { color: var(--ws-fg); font-size: 15px; }
+.wiki-empty p { max-width: 460px; margin: 0; font-size: 12px; line-height: 1.7; }
+.wiki-page-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.wiki-page-card {
+  display: flex; min-height: 176px; flex-direction: column; align-items: flex-start; padding: 17px;
+  border: 1px solid var(--ws-border); border-radius: 7px; background: var(--ws-item); color: var(--ws-fg); text-align: left; cursor: pointer;
+  transition: border-color .15s, transform .15s, background .15s;
+}
+.wiki-page-card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--ws-accent) 44%, var(--ws-border)); background: var(--ws-hover); }
+.wiki-page-type { padding: 3px 7px; border-radius: 4px; background: var(--ws-active); color: var(--ws-accent); font-size: 9px; }
+.wiki-page-card strong { margin-top: 15px; font-size: 15px; }
+.wiki-page-card p { display: -webkit-box; overflow: hidden; margin: 8px 0 16px; color: var(--ws-muted); font-size: 11px; line-height: 1.65; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.wiki-page-meta { margin-top: auto; color: var(--ws-dim); font: 9px "IBM Plex Mono", monospace; }
+.wiki-page-detail, .proposal-detail { color: var(--ws-fg); }
+.wiki-detail-meta { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
+.wiki-detail-meta span { padding: 4px 8px; border: 1px solid var(--ws-border); border-radius: 4px; color: var(--ws-muted); font-size: 10px; }
+.wiki-markdown, .proposal-preview { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; font-size: 13px; line-height: 1.8; }
+.wiki-evidence, .wiki-related { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--ws-border); }
+.wiki-evidence h3, .wiki-related h3, .health-issues h3 { margin: 0 0 12px; color: var(--ws-fg); font-size: 13px; }
+.wiki-evidence-item { margin-bottom: 9px; padding: 11px 12px; border: 1px solid var(--ws-border); border-radius: 6px; background: color-mix(in srgb, var(--ws-item) 84%, transparent); }
+.wiki-evidence-item > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.wiki-evidence-item span { font-size: 9px; }
+.wiki-evidence-item span.verified { color: var(--ws-green); }
+.wiki-evidence-item span.unverified { color: var(--ws-yellow); }
+.wiki-evidence-item p { margin: 8px 0; color: var(--ws-muted); font-size: 11px; }
+.wiki-evidence-item blockquote { margin: 8px 0 0; padding-left: 10px; border-left: 2px solid var(--ws-accent); color: var(--ws-fg); font-size: 11px; line-height: 1.65; }
+.wiki-related > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.wiki-related button { padding: 5px 9px; border: 1px solid var(--ws-border); border-radius: 4px; background: transparent; color: var(--ws-accent); cursor: pointer; }
+.proposal-list { display: flex; flex-direction: column; gap: 8px; }
+.proposal-card { display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--ws-border); border-radius: 7px; background: var(--ws-item); color: var(--ws-fg); text-align: left; cursor: pointer; }
+.proposal-card:hover { border-color: color-mix(in srgb, var(--ws-accent) 38%, var(--ws-border)); background: var(--ws-hover); }
+.proposal-card > div { min-width: 0; }
+.proposal-card strong { font-size: 13px; }
+.proposal-card p { overflow: hidden; margin: 5px 0 0; color: var(--ws-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.proposal-status { width: max-content; padding: 4px 7px; border-radius: 4px; font-size: 9px; }
+.proposal-status.generating { color: var(--ws-accent); background: var(--ws-active); }
+.proposal-status.pending { color: var(--ws-yellow); background: color-mix(in srgb, var(--ws-yellow) 12%, transparent); }
+.proposal-status.approved { color: var(--ws-green); background: color-mix(in srgb, var(--ws-green) 12%, transparent); }
+.proposal-status.rejected, .proposal-status.failed { color: #fb7185; background: rgba(251,113,133,.1); }
+.proposal-count { color: var(--ws-dim); font-size: 10px; white-space: nowrap; }
+.proposal-source { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--ws-border); border-radius: 6px; background: var(--ws-item); }
+.proposal-source small { color: var(--ws-muted); font-size: 9px; }
+.proposal-source strong { font-size: 12px; }
+.proposal-error, .proposal-conflicts { margin-bottom: 14px; padding: 10px 12px; border: 1px solid rgba(251,113,133,.3); border-radius: 6px; background: rgba(251,113,133,.08); color: #fb7185; font-size: 11px; }
+.proposal-conflicts { display: flex; justify-content: space-between; border-color: color-mix(in srgb, var(--ws-yellow) 30%, transparent); background: color-mix(in srgb, var(--ws-yellow) 8%, transparent); color: var(--ws-yellow); }
+.proposal-changes { display: flex; flex-direction: column; gap: 14px; }
+.proposal-change { padding: 14px; border: 1px solid var(--ws-border); border-radius: 7px; }
+.proposal-change header { display: flex; align-items: center; gap: 9px; }
+.proposal-change header span { padding: 3px 6px; border-radius: 3px; font-size: 9px; }
+.proposal-change header span.create { color: var(--ws-green); background: color-mix(in srgb, var(--ws-green) 12%, transparent); }
+.proposal-change header span.update { color: var(--ws-accent); background: var(--ws-active); }
+.proposal-reason { color: var(--ws-muted); font-size: 11px; }
+.proposal-preview { max-height: 280px; overflow-y: auto; padding: 11px; border-radius: 5px; background: var(--ws-panel); }
+.proposal-editor { width: 100%; min-height: 300px; resize: vertical; box-sizing: border-box; padding: 12px; border: 1px solid var(--ws-border); border-radius: 5px; outline: none; background: var(--ws-panel); color: var(--ws-fg); font: 12px/1.75 inherit; }
+.proposal-editor:focus { border-color: var(--ws-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ws-accent) 10%, transparent); }
+.proposal-previous { margin: 10px 0; color: var(--ws-muted); font-size: 11px; }
+.proposal-previous summary { cursor: pointer; color: var(--ws-accent); }
+.proposal-previous article { max-height: 180px; overflow-y: auto; margin-top: 8px; padding: 10px; border-left: 2px solid var(--ws-border); white-space: pre-wrap; line-height: 1.65; }
+.proposal-citations { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.proposal-citations > div { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-left: 2px solid var(--ws-green); background: color-mix(in srgb, var(--ws-green) 5%, transparent); font-size: 10px; }
+.proposal-citations > div.unverified { border-color: #fb7185; background: rgba(251,113,133,.05); }
+.proposal-citations span { color: var(--ws-muted); line-height: 1.55; }
+.proposal-actions { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; padding: 12px 0 0; background: var(--ws-panel); }
+.health-overview { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--ws-border); border-radius: 7px; background: var(--ws-item); }
+.health-overview > div, .health-pending { display: flex; min-height: 108px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 6px; padding: 16px; border: 0; border-right: 1px solid var(--ws-border); background: transparent; color: var(--ws-fg); text-align: left; }
+.health-overview > :last-child { border-right: 0; }
+.health-overview strong { font: 500 25px "IBM Plex Mono", monospace; }
+.health-overview span { color: var(--ws-muted); font-size: 10px; }
+.health-score strong { color: var(--ws-green); }
+.health-pending { cursor: pointer; }
+.health-pending:hover { background: var(--ws-hover); }
+.health-issues { margin-top: 18px; }
+.health-ok { padding: 24px; border: 1px solid color-mix(in srgb, var(--ws-green) 24%, var(--ws-border)); border-radius: 7px; color: var(--ws-green); background: color-mix(in srgb, var(--ws-green) 5%, transparent); font-size: 12px; }
+.health-issue { display: grid; grid-template-columns: 80px 180px 1fr; align-items: center; gap: 12px; padding: 11px 13px; border-bottom: 1px solid var(--ws-border); }
+.health-issue span { color: var(--ws-yellow); font-size: 9px; }
+.health-issue strong { font-size: 12px; }
+.health-issue p { margin: 0; color: var(--ws-muted); font-size: 11px; }
 .proc-pulse {
   width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
   background: var(--ws-accent); animation: pulse 1.2s ease-in-out infinite;
@@ -1769,9 +2058,10 @@ html, body { height: 100%; margin: 0; padding: 0; }
 .k-tag { font-size: 11px; background: var(--ws-active); color: var(--ws-muted); border-radius: 4px; padding: 1px 6px; }
 .k-tag-cat { color: var(--accent-2); }
 .k-reason { font-size: 11px; color: var(--ws-dim); margin-bottom: 8px; line-height: 1.4; }
-.k-footer { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--ws-border); padding-top: 8px; margin-top: 4px; }
-.k-actions { display: flex; align-items: center; gap: 6px; }
-.k-view-btn { border: 0; background: transparent; color: var(--ws-accent); cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; font: inherit; }
+.k-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 5px 8px; border-top: 1px solid var(--ws-border); padding-top: 8px; margin-top: 4px; }
+.k-footer > .k-source { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.k-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px; margin-left: auto; }
+.k-view-btn { flex-shrink: 0; border: 0; background: transparent; color: var(--ws-accent); cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; font: inherit; white-space: nowrap; }
 .k-view-btn:hover { background: var(--ws-hover); }
 .tutorial-content { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.8; color: var(--ws-text); max-height: 68vh; overflow-y: auto; }
 .k-source { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ws-dim); text-decoration: none; }
@@ -1848,6 +2138,14 @@ html, body { height: 100%; margin: 0; padding: 0; }
   .book-shelf-panel { min-width: 0; padding: 18px 14px 0; }
   .shelf-wood { margin-left: -14px; margin-right: -14px; }
   .book-shelf-track { margin-right: -14px; padding-right: 14px; }
+  .knowledge-sections { overflow-x: auto; justify-content: flex-start; }
+  .knowledge-sections button { flex: 0 0 auto; padding: 0 11px; }
+  .wiki-page-grid { grid-template-columns: 1fr; }
+  .proposal-card { grid-template-columns: 64px minmax(0, 1fr); }
+  .proposal-count { grid-column: 2; }
+  .health-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .health-overview > div, .health-pending { min-height: 86px; border-right: 1px solid var(--ws-border); border-bottom: 1px solid var(--ws-border); }
+  .health-issue { grid-template-columns: 1fr; gap: 5px; }
 }
 
 /* Transparent mascot assets extracted from the user-provided reference images. */
@@ -1951,6 +2249,15 @@ html, body { height: 100%; margin: 0; padding: 0; }
   background: #fffdfb !important; border-color: rgba(105,61,91,.2) !important; color: #52324d !important;
 }
 .piggy-modal .ant-input::placeholder, .piggy-modal textarea.ant-input::placeholder { color: #b18ba3 !important; }
+.piggy-modal .add-target-banner { color: #52324d; border-color: rgba(212,108,137,.24); background: #fff1f5; }
+.piggy-modal .add-target-icon { color: #c95678; background: #ffe0e8; }
+.piggy-modal .add-target-banner small { color: #9a6d83; }
+.piggy-modal .wiki-page-detail, .piggy-modal .proposal-detail { color: #52324d; }
+.piggy-modal .wiki-detail-meta span, .piggy-modal .wiki-evidence-item, .piggy-modal .proposal-source, .piggy-modal .proposal-change { border-color: rgba(105,61,91,.16); }
+.piggy-modal .wiki-markdown, .piggy-modal .proposal-preview, .piggy-modal .proposal-editor { color: #52324d; }
+.piggy-modal .proposal-preview, .piggy-modal .proposal-source, .piggy-modal .proposal-editor { border-color: rgba(105,61,91,.18); background: #fff5f7; }
+.piggy-modal .proposal-actions { background: #fffaf7; }
+.piggy-modal .wiki-evidence h3, .piggy-modal .wiki-related h3 { color: #52324d; }
 .piggy-modal .appearance-section { border-color: rgba(105,61,91,.15); }
 .piggy-modal .appearance-section-head strong { color: #52324d; }
 .piggy-modal .appearance-section-head span, .piggy-modal .appearance-note { color: #8e6680; }
